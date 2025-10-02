@@ -1,5 +1,0 @@
-fastapi
-uvicorn[standard]
-gunicorn
-azure-cosmos
-python-dotenv
