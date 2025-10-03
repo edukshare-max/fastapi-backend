@@ -47,7 +47,7 @@ class CarnetModel(BaseModel):
     matricula: str
     nombreCompleto: Optional[str] = ""
     correo: Optional[str] = ""
-    edad: Optional[str] = ""
+    edad: Optional[int] = 0
     sexo: Optional[str] = ""
     categoria: Optional[str] = ""
     programa: Optional[str] = ""
