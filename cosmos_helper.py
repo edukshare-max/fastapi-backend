@@ -1,5 +1,6 @@
 import os
 from azure.cosmos import CosmosClient
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,14 +17,31 @@ class CosmosDBHelper:
         self.partition_key = partition_key
 
     def get_by_id(self, id_value):
-        return self.container.read_item(item=id_value, partition_key=id_value)
+        try:
+            return self.container.read_item(item=id_value, partition_key=id_value)
+        except CosmosHttpResponseError as e:
+            print(f"[CosmosDB] Error reading item {id_value}: {e.status_code} - {e.message}")
+            raise
 
     def query_items(self, sql, params=None):
-        return list(self.container.query_items(
-            query=sql,
-            parameters=params or [],
-            enable_cross_partition_query=True
-        ))
+        try:
+            return list(self.container.query_items(
+                query=sql,
+                parameters=params or [],
+                enable_cross_partition_query=True
+            ))
+        except CosmosHttpResponseError as e:
+            print(f"[CosmosDB] Error querying: {e.status_code} - {e.message}")
+            raise
 
     def upsert_item(self, item, partition_value):
-        return self.container.upsert_item(body=item, partition_key=partition_value)
+        try:
+            print(f"[CosmosDB] Upserting item with PK: {partition_value}")
+            result = self.container.upsert_item(body=item, partition_key=partition_value)
+            print(f"[CosmosDB] Upsert successful: {result.get('id', 'unknown_id')}")
+            return result
+        except CosmosHttpResponseError as e:
+            print(f"[CosmosDB] Error upserting: {e.status_code} - {e.message}")
+            print(f"[CosmosDB] Item: {item}")
+            print(f"[CosmosDB] Partition key: {partition_value}")
+            raise
