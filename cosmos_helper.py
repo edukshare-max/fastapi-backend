@@ -37,7 +37,21 @@ class CosmosDBHelper:
     def upsert_item(self, item, partition_value):
         try:
             print(f"[CosmosDB] Upserting item with PK: {partition_value}")
-            result = self.container.upsert_item(body=item, partition_key=partition_value)
+            
+            # Probar diferentes métodos según la versión del SDK
+            try:
+                # Método nuevo (azure-cosmos >= 4.0)
+                result = self.container.upsert_item(body=item, partition_key=partition_value)
+            except TypeError as te:
+                if "partition_key" in str(te):
+                    print(f"[CosmosDB] Trying older SDK method...")
+                    # Método viejo (azure-cosmos < 4.0) - pasar partition key en el item
+                    pk_field = self.partition_key.lstrip('/')  # Remover '/' inicial
+                    item[pk_field] = partition_value
+                    result = self.container.upsert_item(item)
+                else:
+                    raise
+            
             print(f"[CosmosDB] Upsert successful: {result.get('id', 'unknown_id')}")
             return result
         except CosmosHttpResponseError as e:
