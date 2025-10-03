@@ -10,9 +10,9 @@ import os
 # Router para citas
 router = APIRouter()
 
-# Contenedor para citas
+# Contenedor para citas - usar mismo contenedor que carnets por simplicidad
 citas = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_CITAS", "citas"), "/matricula"
+    os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
 )
 
 # Modelo para las citas
@@ -42,10 +42,10 @@ def create_cita(cita: CitaModel = Body(...)):
             cita_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
         cita_dict["updatedAt"] = datetime.utcnow().isoformat() + "Z"
         
-        # Cosmos: PK = /matricula
-        res = citas.upsert_item(cita_dict, partition_value=cita.matricula)
+        # Cosmos: PK = /id (mismo patrón que carnets)
+        res = citas.upsert_item(cita_dict, partition_value=cita_dict["id"])
         
-        print(f"[POST /citas] Container: citas, PK: {cita.matricula}, ID: {cita_dict['id']}, Status: created")
+        print(f"[POST /citas] Container: carnets, PK: {cita_dict['id']}, Matricula: {cita.matricula}, Status: created")
         return {"status": "created", "data": res, "id": cita_dict["id"]}
     except CosmosHttpResponseError as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
@@ -56,10 +56,10 @@ def create_cita(cita: CitaModel = Body(...)):
 def get_citas(matricula: str):
     try:
         result = citas.query_items(
-            "SELECT * FROM c WHERE c.matricula=@m ORDER BY c._ts DESC",
+            "SELECT * FROM c WHERE c.matricula=@m AND STARTSWITH(c.id, 'cita:') ORDER BY c._ts DESC",
             params=[{"name": "@m", "value": matricula}]
         )
-        print(f"[GET /citas/{matricula}] Container: citas, Results: {len(result)}")
+        print(f"[GET /citas/{matricula}] Container: carnets, Filter: cita:*, Results: {len(result)}")
         return result
     except CosmosHttpResponseError as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
