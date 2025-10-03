@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from cosmos_helper import CosmosDBHelper
+from azure.cosmos.exceptions import CosmosHttpResponseError
 import os
 from dotenv import load_dotenv
 from datetime import datetime
@@ -71,34 +72,30 @@ class CarnetModel(BaseModel):
 
 @app.get("/carnet/{id}")
 def get_carnet(id: str):
-    print(f"[GET] Buscando carnet: {id}")
-    
     # 1) Intento por ID/PK (id == param)
     try:
         data = carnets.get_by_id(id)
-        print(f"[GET] ✅ Encontrado por ID directo")
         return data
-    except Exception as e:
-        print(f"[GET] ID directo falló: {e}")
-        
+    except CosmosHttpResponseError as e:
         # 2) Si NotFound → query por matricula
-        try:
-            print(f"[GET] 🔄 Fallback: buscando por matrícula")
-            results = carnets.query_items(
-                "SELECT TOP 1 * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC",
-                params=[{"name": "@m", "value": id}]
-            )
-            
-            if results:
-                print(f"[GET] ✅ Encontrado por matrícula (resultados: {len(results)})")
-                return results[0]
-            else:
-                print(f"[GET] ❌ No encontrado ni por ID ni por matrícula")
-                raise HTTPException(status_code=404, detail="Carnet no encontrado")
+        if e.status_code == 404:
+            try:
+                results = carnets.query_items(
+                    "SELECT TOP 1 * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC",
+                    params=[{"name": "@m", "value": id}]
+                )
                 
-        except Exception as fallback_error:
-            print(f"[GET] ❌ Error en fallback: {fallback_error}")
-            raise HTTPException(status_code=404, detail="Carnet no encontrado")
+                if results:
+                    return results[0]
+                else:
+                    raise HTTPException(status_code=404, detail={"code": 404, "message": "Carnet no encontrado"})
+                    
+            except CosmosHttpResponseError as fallback_error:
+                raise HTTPException(status_code=fallback_error.status_code, detail={"code": fallback_error.status_code, "message": fallback_error.message})
+        else:
+            raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
 @app.get("/notas/{matricula}")
 def get_notas(matricula: str):
@@ -108,8 +105,10 @@ def get_notas(matricula: str):
             params=[{"name": "@m", "value": matricula}]
         )
         return result
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"No encontrado: {e}")
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
 @app.post("/notas/")
 @app.post("/notas")  # Alias sin slash final
@@ -122,17 +121,14 @@ def create_nota(nota: NotaModel = Body(...)):
         if not nota_dict.get("createdAt"):
             nota_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
         
-        print(f"[POST /notas] Request: {json.dumps(nota_dict, indent=2)}")
-        
         # Cosmos: PK = /matricula
         res = notas.upsert_item(nota_dict, partition_value=nota.matricula)
         
-        print(f"[POST /notas] Cosmos Success: {res}")
         return {"status": "created", "data": res, "id": nota_dict["id"]}
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
     except Exception as e:
-        error_msg = f"Error al guardar la nota: {str(e)}"
-        print(f"[POST /notas] Error: {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
 # Endpoint para crear carnets (con rutas alternativas)
 @app.post("/carnet/")
@@ -144,18 +140,14 @@ def create_carnet(carnet: CarnetModel = Body(...)):
         if not carnet_dict.get("id"):
             carnet_dict["id"] = f"carnet:{uuid.uuid4()}"
         
-        print(f"[POST /carnet] Container: carnets, PK: {carnet_dict['id']}")
-        print(f"[POST /carnet] Matricula: {carnet.matricula}")
-        
         # Cosmos: PK = /id
         res = carnets.upsert_item(carnet_dict, partition_value=carnet_dict["id"])
         
-        print(f"[POST /carnet] SUCCESS: Document {res.get('id')} saved to carnets container")
         return {"status": "created", "data": res, "id": carnet_dict["id"]}
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
     except Exception as e:
-        error_msg = f"Error al guardar el carnet: {str(e)}"
-        print(f"[POST /carnet] Error: {error_msg}")
-        raise HTTPException(status_code=400, detail=error_msg)
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
 # Endpoint adicional para compatibilidad con Flutter (rutas originales)
 @app.options("/notas")

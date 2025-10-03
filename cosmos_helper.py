@@ -1,4 +1,5 @@
 import os
+import time
 from azure.cosmos import CosmosClient
 from azure.cosmos.exceptions import CosmosHttpResponseError
 from dotenv import load_dotenv
@@ -20,8 +21,7 @@ class CosmosDBHelper:
         try:
             return self.container.read_item(item=id_value, partition_key=id_value)
         except CosmosHttpResponseError as e:
-            print(f"[CosmosDB] Error reading item {id_value}: {e.status_code} - {e.message}")
-            raise
+            raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
 
     def query_items(self, sql, params=None):
         try:
@@ -31,20 +31,16 @@ class CosmosDBHelper:
                 enable_cross_partition_query=True
             ))
         except CosmosHttpResponseError as e:
-            print(f"[CosmosDB] Error querying: {e.status_code} - {e.message}")
-            raise
+            raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
 
     def upsert_item(self, item, partition_value):
         try:
-            print(f"[CosmosDB] Upserting item with PK: {partition_value}")
-            
             # Probar diferentes métodos según la versión del SDK
             try:
                 # Método nuevo (azure-cosmos >= 4.0)
                 result = self.container.upsert_item(body=item, partition_key=partition_value)
             except TypeError as te:
                 if "partition_key" in str(te):
-                    print(f"[CosmosDB] Trying older SDK method...")
                     # Método viejo (azure-cosmos < 4.0) - pasar partition key en el item
                     pk_field = self.partition_key.lstrip('/')  # Remover '/' inicial
                     item[pk_field] = partition_value
@@ -52,10 +48,29 @@ class CosmosDBHelper:
                 else:
                     raise
             
-            print(f"[CosmosDB] Upsert successful: {result.get('id', 'unknown_id')}")
             return result
         except CosmosHttpResponseError as e:
-            print(f"[CosmosDB] Error upserting: {e.status_code} - {e.message}")
-            print(f"[CosmosDB] Item: {item}")
-            print(f"[CosmosDB] Partition key: {partition_value}")
-            raise
+            # Retry para 429 (throttling)
+            if e.status_code == 429:
+                time.sleep(0.2)  # 200ms
+                try:
+                    # Retry una vez
+                    try:
+                        result = self.container.upsert_item(body=item, partition_key=partition_value)
+                    except TypeError:
+                        pk_field = self.partition_key.lstrip('/')
+                        item[pk_field] = partition_value
+                        result = self.container.upsert_item(item)
+                    return result
+                except CosmosHttpResponseError as retry_e:
+                    raise CosmosHttpResponseError(status_code=retry_e.status_code, message=retry_e.message)
+            
+            # Idempotencia para 409 (conflict)
+            if e.status_code == 409:
+                # Devolver el documento actual
+                try:
+                    return self.get_by_id(item.get('id'))
+                except:
+                    raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
+            
+            raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
