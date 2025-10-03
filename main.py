@@ -121,12 +121,13 @@ def create_carnet(carnet: CarnetModel = Body(...)):
         if not carnet_dict.get("id"):
             carnet_dict["id"] = f"carnet:{uuid.uuid4()}"
         
-        print(f"[POST /carnet] Request: {json.dumps(carnet_dict, indent=2)}")
+        print(f"[POST /carnet] Container: carnets, PK: {carnet_dict['id']}")
+        print(f"[POST /carnet] Matricula: {carnet.matricula}")
         
         # Cosmos: PK = /id
         res = carnets.upsert_item(carnet_dict, partition_value=carnet_dict["id"])
         
-        print(f"[POST /carnet] Cosmos Success: {res}")
+        print(f"[POST /carnet] SUCCESS: Document {res.get('id')} saved to carnets container")
         return {"status": "created", "data": res, "id": carnet_dict["id"]}
     except Exception as e:
         error_msg = f"Error al guardar el carnet: {str(e)}"
