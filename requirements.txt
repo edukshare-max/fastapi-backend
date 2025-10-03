@@ -3,3 +3,5 @@ gunicorn
 uvicorn
 azure-cosmos
 python-dotenv
+google-api-python-client
+google-auth

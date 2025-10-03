@@ -6,6 +6,83 @@ from datetime import datetime
 from typing import Optional
 import uuid
 import os
+import json
+
+# Google Calendar imports (optional)
+try:
+    from googleapiclient.discovery import build
+    from google.oauth2.service_account import Credentials
+    GOOGLE_AVAILABLE = True
+except ImportError:
+    GOOGLE_AVAILABLE = False
+
+# Router para citas
+router = APIRouter()
+
+# Contenedor para citas - usar mismo contenedor que carnets por simplicidad
+citas = CosmosDBHelper(
+    os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
+)
+
+def create_google_event(cita_data):
+    """Crear evento en Google Calendar si está habilitado"""
+    if not os.environ.get("GCAL_ENABLED", "false").lower() == "true":
+        return None, None
+    
+    if not GOOGLE_AVAILABLE:
+        print("[GCAL] Google libraries not available")
+        return None, None
+    
+    try:
+        # Configurar credenciales
+        sa_json = os.environ.get("GCAL_SA_JSON")
+        if not sa_json:
+            print("[GCAL] No service account JSON configured")
+            return None, None
+        
+        # Parse JSON de credenciales
+        if sa_json.startswith('{'):
+            credentials_info = json.loads(sa_json)
+        else:
+            # Asumir que es una ruta de archivo
+            with open(sa_json) as f:
+                credentials_info = json.load(f)
+        
+        credentials = Credentials.from_service_account_info(
+            credentials_info,
+            scopes=['https://www.googleapis.com/auth/calendar']
+        )
+        
+        service = build('calendar', 'v3', credentials=credentials)
+        calendar_id = os.environ.get("GCAL_CALENDAR_ID", "primary")
+        app_tz = os.environ.get("APP_TZ", "UTC")
+        
+        # Crear evento
+        event = {
+            'summary': cita_data['motivo'],
+            'description': f"Paciente: {cita_data['matricula']}\nDepartamento: {cita_data.get('departamento', 'N/A')}",
+            'start': {
+                'dateTime': cita_data['inicio'],
+                'timeZone': app_tz,
+            },
+            'end': {
+                'dateTime': cita_data['fin'],
+                'timeZone': app_tz,
+            },
+        }
+        
+        # Insertar evento
+        created_event = service.events().insert(calendarId=calendar_id, body=event).execute()
+        
+        event_id = created_event.get('id')
+        html_link = created_event.get('htmlLink')
+        
+        print(f"[GCAL] Event created: {event_id}")
+        return event_id, html_link
+        
+    except Exception as e:
+        print(f"[GCAL] Error creating event: {type(e).__name__}: {str(e)}")
+        return None, None
 
 # Router para citas
 router = APIRouter()
@@ -25,6 +102,7 @@ class CitaModel(BaseModel):
     departamento: Optional[str] = ""
     estado: Optional[str] = "programada"
     googleEventId: Optional[str] = ""
+    htmlLink: Optional[str] = ""
     createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
     
@@ -42,10 +120,17 @@ def create_cita(cita: CitaModel = Body(...)):
             cita_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
         cita_dict["updatedAt"] = datetime.utcnow().isoformat() + "Z"
         
+        # Intentar crear evento en Google Calendar
+        google_event_id, html_link = create_google_event(cita_dict)
+        if google_event_id:
+            cita_dict["googleEventId"] = google_event_id
+            cita_dict["htmlLink"] = html_link
+        
         # Cosmos: PK = /id (mismo patrón que carnets)
         res = citas.upsert_item(cita_dict, partition_value=cita_dict["id"])
         
-        print(f"[POST /citas] Container: carnets, PK: {cita_dict['id']}, Matricula: {cita.matricula}, Status: created")
+        gcal_status = "✅" if google_event_id else "⚠️"
+        print(f"[POST /citas] Container: carnets, PK: {cita_dict['id']}, Matricula: {cita.matricula}, GCAL: {gcal_status}, Status: created")
         return {"status": "created", "data": res, "id": cita_dict["id"]}
     except CosmosHttpResponseError as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
