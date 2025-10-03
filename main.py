@@ -71,11 +71,34 @@ class CarnetModel(BaseModel):
 
 @app.get("/carnet/{id}")
 def get_carnet(id: str):
+    print(f"[GET] Buscando carnet: {id}")
+    
+    # 1) Intento por ID/PK (id == param)
     try:
         data = carnets.get_by_id(id)
+        print(f"[GET] ✅ Encontrado por ID directo")
         return data
     except Exception as e:
-        raise HTTPException(status_code=404, detail=f"No encontrado: {e}")
+        print(f"[GET] ID directo falló: {e}")
+        
+        # 2) Si NotFound → query por matricula
+        try:
+            print(f"[GET] 🔄 Fallback: buscando por matrícula")
+            results = carnets.query_items(
+                "SELECT TOP 1 * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC",
+                params=[{"name": "@m", "value": id}]
+            )
+            
+            if results:
+                print(f"[GET] ✅ Encontrado por matrícula (resultados: {len(results)})")
+                return results[0]
+            else:
+                print(f"[GET] ❌ No encontrado ni por ID ni por matrícula")
+                raise HTTPException(status_code=404, detail="Carnet no encontrado")
+                
+        except Exception as fallback_error:
+            print(f"[GET] ❌ Error en fallback: {fallback_error}")
+            raise HTTPException(status_code=404, detail="Carnet no encontrado")
 
 @app.get("/notas/{matricula}")
 def get_notas(matricula: str):
