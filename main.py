@@ -30,6 +30,10 @@ notas = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_NOTAS"], "/matricula"
 )
 
+# Importar y montar router de citas
+from routes_citas import router as citas_router
+app.include_router(citas_router)
+
 # Modelo para las notas (campos opcionales con alias)
 class NotaModel(BaseModel):
     id: Optional[str] = None
