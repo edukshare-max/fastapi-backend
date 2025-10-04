@@ -76,25 +76,44 @@ class CarnetModel(BaseModel):
 
 @app.get("/carnet/{id}")
 def get_carnet(id: str):
-    # 1) Intento por ID/PK (id == param)
+    # DRY-RUN: Log de entrada
+    print(f"[DRY-RUN] Entrada: raw_id={id}")
+    
+    # Normalizar id: si no empieza con carnet:, agregar prefijo
+    normalized_id = id if id.startswith("carnet:") else f"carnet:{id}"
+    print(f"[DRY-RUN] normalized_id={normalized_id}, ruta=/carnet/{id}, contenedor=carnets")
+    
+    # Intento A: lectura directa por id normalizado
     try:
-        data = carnets.get_by_id(id)
+        print(f"[DRY-RUN] Intento A: read_item(item={normalized_id}, partition_key={normalized_id})")
+        data = carnets.get_by_id(normalized_id)
+        print(f"[DRY-RUN] Decisión: devolviendo carnet (encontrado por ID)")
         return data
     except CosmosHttpResponseError as e:
-        # 2) Si NotFound → query por matricula
+        # Intento B: Si NotFound → query por matricula excluyendo citas
         if e.status_code == 404:
             try:
+                print(f"[DRY-RUN] Intento B: query por matrícula={id} excluyendo citas")
                 results = carnets.query_items(
-                    "SELECT TOP 1 * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC",
+                    """SELECT TOP 1 * FROM c 
+                       WHERE c.matricula = @m 
+                         AND NOT STARTSWITH(c.id, 'cita:')
+                         AND NOT IS_DEFINED(c.inicio)
+                         AND NOT IS_DEFINED(c.fin)
+                       ORDER BY c._ts DESC""",
                     params=[{"name": "@m", "value": id}]
                 )
                 
+                print(f"[DRY-RUN] Query resultados: {len(results) if results else 0}")
                 if results:
+                    print(f"[DRY-RUN] Decisión: devolviendo carnet (encontrado por matrícula)")
                     return results[0]
                 else:
+                    print(f"[DRY-RUN] Decisión: 404 no encontrado")
                     raise HTTPException(status_code=404, detail={"code": 404, "message": "Carnet no encontrado"})
                     
             except CosmosHttpResponseError as fallback_error:
+                print(f"[DRY-RUN] Decisión: 404 no encontrado (error en query)")
                 raise HTTPException(status_code=fallback_error.status_code, detail={"code": fallback_error.status_code, "message": fallback_error.message})
         else:
             raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
