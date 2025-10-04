@@ -81,7 +81,7 @@ def get_citas_container():
     """Retorna el contenedor de citas"""
     client = CosmosClient(COSMOS_URL, credential=COSMOS_KEY)
     database = client.get_database_client(DB_NAME)
-    container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "citas_ida")
+    container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "citas_id")
     return database.get_container_client(container_name)
 
 def get_citas_pk_path():
