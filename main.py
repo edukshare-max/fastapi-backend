@@ -14,6 +14,18 @@ load_dotenv()
 
 app = FastAPI()
 
+# APP_BOOT: Log de startup para verificar configuración
+import subprocess
+try:
+    commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
+                                        cwd=os.path.dirname(__file__)).decode().strip()
+except:
+    commit_hash = "unknown"
+
+print(f"APP_BOOT: commit={commit_hash}, db={os.environ.get('COSMOS_DB', 'NOT_SET')}, "
+      f"container_citas={os.environ.get('COSMOS_CONTAINER_CITAS', 'NOT_SET')}, "
+      f"pk={os.environ.get('COSMOS_PK_CITAS', 'NOT_SET')}")
+
 # CORS para permitir requests del frontend
 app.add_middleware(
     CORSMiddleware,
@@ -212,6 +224,43 @@ def health_check():
         }
 
 
+@app.get("/_diag/citas")
+def diagnose_citas():
+    """Endpoint de diagnóstico para verificar configuración de citas"""
+    try:
+        from cosmos_helper import get_citas_container, get_citas_pk_path
+        
+        # Obtener configuración
+        db_name = os.environ.get("COSMOS_DB", "NOT_SET")
+        container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "NOT_SET")
+        pk_path = os.environ.get("COSMOS_PK_CITAS", "NOT_SET")
+        
+        # Probar conectividad
+        can_read = False
+        try:
+            container = get_citas_container()
+            # Test con query simple
+            list(container.query_items("SELECT TOP 1 * FROM c", enable_cross_partition_query=True))
+            can_read = True
+        except Exception as e:
+            print(f"[DIAG] Error testing citas container: {e}")
+        
+        return {
+            "db": db_name,
+            "container": container_name,
+            "pk_path": pk_path,
+            "can_read": can_read
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "db": os.environ.get("COSMOS_DB", "NOT_SET"),
+            "container": os.environ.get("COSMOS_CONTAINER_CITAS", "NOT_SET"),
+            "pk_path": os.environ.get("COSMOS_PK_CITAS", "NOT_SET"),
+            "can_read": False
+        }
+
+
 # === RUTAS DE CITAS (contenedor citas_ida exclusivamente) ===
 
 class CitaModel(BaseModel):
@@ -228,13 +277,7 @@ class CitaModel(BaseModel):
 @app.post("/citas")
 def create_cita(cita: CitaModel):
     try:
-        # DRY-RUN: Al entrar
-        container = get_citas_container()
-        pk_path = get_citas_pk_path()
         cita_dict = cita.dict()
-        
-        print(f"[DRY-RUN] POST /citas - db: DakuSasu, container: citas_ida, pk_path: {pk_path}")
-        print(f"[DRY-RUN] payload keys: {list(cita_dict.keys())}")
         
         # Validar mínimos
         if not all([cita_dict.get("matricula"), cita_dict.get("inicio"), 
@@ -243,6 +286,9 @@ def create_cita(cita: CitaModel):
         
         # Usar helper exclusivo para citas
         result = upsert_cita(cita_dict)
+        
+        # DRY-RUN: Log breve con resultado
+        print(f"[DRY-RUN] container=citas_ida, pk=/id, id={result.get('id')}, status=created")
         
         return {"status": "created", "data": result}
         
