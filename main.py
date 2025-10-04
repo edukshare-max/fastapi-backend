@@ -22,8 +22,8 @@ try:
 except:
     commit_hash = "unknown"
 
-print(f"APP_BOOT: commit={commit_hash}, db={os.environ.get('COSMOS_DB', 'NOT_SET')}, "
-      f"container_citas={os.environ.get('COSMOS_CONTAINER_CITAS', 'NOT_SET')}, "
+print(f"APP_BOOT db={os.environ.get('COSMOS_DB', 'NOT_SET')} "
+      f"container_citas={os.environ.get('COSMOS_CONTAINER_CITAS', 'NOT_SET')} "
       f"pk={os.environ.get('COSMOS_PK_CITAS', 'NOT_SET')}")
 
 # CORS para permitir requests del frontend
