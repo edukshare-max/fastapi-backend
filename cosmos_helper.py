@@ -78,11 +78,14 @@ class CosmosDBHelper:
 
 # Helpers específicos para citas (contenedor citas_ida)
 def get_citas_container():
-    """Retorna el contenedor de citas"""
-    client = CosmosClient(COSMOS_URL, credential=COSMOS_KEY)
-    database = client.get_database_client(DB_NAME)
-    container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "citas_id")
-    return database.get_container_client(container_name)
+    """Retorna el contenedor de citas con inicialización perezosa"""
+    try:
+        client = CosmosClient(COSMOS_URL, credential=COSMOS_KEY)
+        database = client.get_database_client(DB_NAME)
+        container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id")
+        return database.get_container_client(container_name)
+    except Exception as e:
+        raise Exception(f"Error connecting to citas container: {str(e)}")
 
 def get_citas_pk_path():
     """Detecta el partition key path del contenedor de citas"""
@@ -91,14 +94,15 @@ def get_citas_pk_path():
     return pk_path
 
 def upsert_cita(doc):
-    """Helper seguro para upsert de citas"""
+    """Helper seguro para upsert de citas con lazy init"""
     import uuid
     from datetime import datetime
     
+    # Lazy init: obtener contenedor aquí, no al inicio
     container = get_citas_container()
     pk_path = get_citas_pk_path()
     
-    print(f"[DRY-RUN] upsert_cita - container: citas_ida, pk_path: {pk_path}")
+    print(f"[DRY-RUN] upsert_cita - container: cita_id, pk_path: {pk_path}")
     print(f"[DRY-RUN] payload keys: {list(doc.keys())}")
     
     # Autocompletar campos según PK

@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException, Body
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from cosmos_helper import CosmosDBHelper
@@ -277,6 +278,9 @@ class CitaModel(BaseModel):
 @app.post("/citas")
 def create_cita(cita: CitaModel):
     try:
+        # Lazy init: obtener contenedor dentro del handler
+        container = get_citas_container()
+        
         cita_dict = cita.dict()
         
         # Validar mínimos
@@ -288,24 +292,29 @@ def create_cita(cita: CitaModel):
         result = upsert_cita(cita_dict)
         
         # DRY-RUN: Log breve con resultado
-        print(f"[DRY-RUN] container=citas_ida, pk=/id, id={result.get('id')}, status=created")
+        print(f"[DRY-RUN] container=cita_id pk=/id id={result.get('id')} status=201")
         
         return {"status": "created", "data": result}
         
-    except CosmosHttpResponseError as e:
-        print(f"[DRY-RUN] Error Cosmos: {e.status_code}")
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
-    except Exception as e:
-        print(f"[DRY-RUN] Error general: {str(e)}")
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+    except Exception as cosmos_error:
+        if "Error connecting to citas container" in str(cosmos_error):
+            # Error de configuración/credenciales: devolver 503
+            return JSONResponse(
+                status_code=503,
+                content={"error": "citas_unavailable", "detail": str(cosmos_error)}
+            )
+        # Otros errores
+        print(f"[DRY-RUN] Error general: {str(cosmos_error)}")
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(cosmos_error)})
 
 @app.get("/citas/{cita_id}")
 def get_cita_by_id(cita_id: str):
     try:
+        # Lazy init: obtener contenedor dentro del handler
         container = get_citas_container()
         pk_path = get_citas_pk_path()
         
-        print(f"[DRY-RUN] GET /citas/{cita_id} - leyendo desde citas_ida, pk_path: {pk_path}")
+        print(f"[DRY-RUN] GET /citas/{cita_id} - leyendo desde cita_id, pk_path: {pk_path}")
         
         if pk_path == "/id":
             # Leer directo por partition key
@@ -323,24 +332,30 @@ def get_cita_by_id(cita_id: str):
                 raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
             result = results[0]
         
-        print(f"[DRY-RUN] Cita encontrada en citas_ida: {result.get('id')}")
+        print(f"[DRY-RUN] Cita encontrada en cita_id: {result.get('id')}")
         return result
         
-    except CosmosHttpResponseError as e:
-        if e.status_code == 404:
+    except Exception as cosmos_error:
+        if "Error connecting to citas container" in str(cosmos_error):
+            # Error de configuración/credenciales: devolver 503
+            return JSONResponse(
+                status_code=503,
+                content={"error": "citas_unavailable", "detail": str(cosmos_error)}
+            )
+        elif "404" in str(cosmos_error) or "not found" in str(cosmos_error).lower():
             raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+        # Otros errores
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(cosmos_error)})
 
 @app.get("/citas/por-matricula/{matricula}")
 def get_citas_by_matricula(matricula: str):
     try:
+        # Lazy init: obtener contenedor dentro del handler
         container = get_citas_container()
         
-        print(f"[DRY-RUN] GET /citas/por-matricula/{matricula} - leyendo desde citas_ida")
+        print(f"[DRY-RUN] GET /citas/por-matricula/{matricula} - leyendo desde cita_id")
         
-        # Query siempre en citas_ida
+        # Query siempre en cita_id
         query = "SELECT * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC"
         params = [{"name": "@m", "value": matricula}]
         
@@ -350,10 +365,15 @@ def get_citas_by_matricula(matricula: str):
             enable_cross_partition_query=True
         ))
         
-        print(f"[DRY-RUN] Citas encontradas en citas_ida: {len(results)}")
+        print(f"[DRY-RUN] Citas encontradas en cita_id: {len(results)}")
         return results
         
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+    except Exception as cosmos_error:
+        if "Error connecting to citas container" in str(cosmos_error):
+            # Error de configuración/credenciales: devolver 503
+            return JSONResponse(
+                status_code=503,
+                content={"error": "citas_unavailable", "detail": str(cosmos_error)}
+            )
+        # Otros errores
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(cosmos_error)})
