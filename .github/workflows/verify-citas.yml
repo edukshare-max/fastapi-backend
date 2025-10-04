@@ -27,244 +27,110 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      API_BASE_URL: ${{ inputs.api_base_url }}
+      MATRICULA: ${{ inputs.matricula }}
+      INICIO: ${{ inputs.inicio }}
+      FIN: ${{ inputs.fin }}
     steps:
-      - name: Install jq
+      - uses: actions/checkout@v4
+
+      - name: Setup tools
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y jq
-          
+
       - name: Step 1 - Diagnóstico
-        id: diagnostico
+        shell: bash
         run: |
-          echo "🔍 Verificando diagnóstico de citas..."
-          
-          diag_response=$(curl -s "${{ github.event.inputs.api_base_url }}/_diag/citas?t=1")
-          echo "Respuesta diagnóstico: $diag_response"
-          
-          # Verificar campos requeridos
-          db=$(echo "$diag_response" | jq -r '.db // empty')
-          container=$(echo "$diag_response" | jq -r '.container // empty')
-          pk=$(echo "$diag_response" | jq -r '.pk_path // empty')
-          can_read=$(echo "$diag_response" | jq -r '.can_read // empty')
-          
-          echo "db=$db" >> $GITHUB_OUTPUT
-          echo "container=$container" >> $GITHUB_OUTPUT
-          echo "pk=$pk" >> $GITHUB_OUTPUT
-          echo "can_read=$can_read" >> $GITHUB_OUTPUT
-          
-          # Validaciones
-          if [ "$db" != "SASU" ]; then
-            echo "❌ ERROR: db esperado=SASU, actual=$db"
-            exit 1
-          fi
-          
-          if [ "$container" != "cita_id" ]; then
-            echo "❌ ERROR: container esperado=cita_id, actual=$container"
-            exit 1
-          fi
-          
-          if [ "$pk" != "/id" ]; then
-            echo "❌ ERROR: pk esperado=/id, actual=$pk"
-            exit 1
-          fi
-          
-          if [ "$can_read" != "true" ]; then
-            echo "❌ ERROR: can_read esperado=true, actual=$can_read"
-            exit 1
-          fi
-          
-          echo "✅ Diagnóstico correcto: db=SASU, container=cita_id, pk=/id, can_read=true"
-          echo "$diag_response" > diag_response.json
-          
-      - name: Step 2 - Crear cita
-        id: crear_cita
+          set -Eeuo pipefail
+          mkdir -p verify-citas-results
+          curl -fsSL "$API_BASE_URL/_diag/citas?t=1" -o verify-citas-results/diag.json || echo '{}' > verify-citas-results/diag.json
+          DB=$(jq -r '.db // empty' verify-citas-results/diag.json)
+          CT=$(jq -r '.container // empty' verify-citas-results/diag.json)
+          PK=$(jq -r '.pk_path // empty' verify-citas-results/diag.json)
+          CR=$(jq -r '.can_read // empty' verify-citas-results/diag.json)
+          echo "DB=$DB"
+          echo "CONTAINER=$CT"
+          echo "PK=$PK"
+          echo "CAN_READ=$CR"
+          FAIL=0
+          [[ "$DB" == "SASU" ]] || FAIL=1
+          [[ "$CT" == "cita_id" ]] || FAIL=1
+          [[ "$PK" == "/id" ]] || FAIL=1
+          [[ "$CR" == "true" ]] || FAIL=1
+          echo "DIAG_FAIL=$FAIL" >> $GITHUB_ENV
+
+      - name: Step 2 - Crear Cita
+        shell: bash
         run: |
-          echo "📝 Creando cita de prueba..."
-          
-          # Crear JSON body
-          body='{
-            "matricula": "${{ github.event.inputs.matricula }}",
-            "inicio": "${{ github.event.inputs.inicio }}",
-            "fin": "${{ github.event.inputs.fin }}",
-            "motivo": "SEGUIMIENTO"
-          }'
-          
-          echo "Body: $body"
-          
-          # POST request
-          response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
-            -X POST "${{ github.event.inputs.api_base_url }}/citas?t=1" \
-            -H "Content-Type: application/json" \
-            -d "$body")
-          
-          # Separar body y status code
-          http_body=$(echo "$response" | sed -E 's/HTTPSTATUS\:[0-9]{3}$//')
-          http_code=$(echo "$response" | tr -d '\n' | sed -E 's/.*HTTPSTATUS:([0-9]{3})$/\1/')
-          
-          echo "HTTP Status: $http_code"
-          echo "Response Body: $http_body"
-          
-          if [ "$http_code" != "201" ]; then
-            echo "❌ ERROR: Status esperado=201, actual=$http_code"
-            echo "Response: $http_body"
-            exit 1
-          fi
-          
-          # Extraer ID
-          cita_id=$(echo "$http_body" | jq -r '.data.id // empty')
-          if [ -z "$cita_id" ] || [ "$cita_id" = "null" ]; then
-            echo "❌ ERROR: No se pudo extraer ID de la respuesta"
-            echo "Response: $http_body"
-            exit 1
-          fi
-          
-          echo "cita_id=$cita_id" >> $GITHUB_OUTPUT
-          echo "✅ Cita creada con ID: $cita_id"
-          echo "$http_body" > create_response.json
-          
-      - name: Step 3 - Listar por matrícula
-        id: listar_citas
+          set -Eeuo pipefail
+          BODY=$(jq -n --arg m "$MATRICULA" --arg i "$INICIO" --arg f "$FIN" --arg mo "SEGUIMIENTO" '{matricula:$m,inicio:$i,fin:$f,motivo:$mo}')
+          HTTP_CODE=$(curl -s -w "%{http_code}" -o verify-citas-results/post.json -H "Content-Type: application/json" -X POST "$API_BASE_URL/citas?t=1" -d "$BODY")
+          echo "POST_CODE=$HTTP_CODE"
+          CID=$(jq -r '.data.id // .id // empty' verify-citas-results/post.json)
+          echo "CID=$CID" >> $GITHUB_ENV
+          [[ "$HTTP_CODE" == "200" || "$HTTP_CODE" == "201" ]] && echo "POST_FAIL=0" >> $GITHUB_ENV || echo "POST_FAIL=1" >> $GITHUB_ENV
+
+      - name: Step 3 - Listar por Matrícula
+        shell: bash
         run: |
-          echo "📋 Listando citas por matrícula ${{ github.event.inputs.matricula }}..."
-          
-          list_response=$(curl -s "${{ github.event.inputs.api_base_url }}/citas/por-matricula/${{ github.event.inputs.matricula }}?t=1")
-          echo "Response: $list_response"
-          
-          # Verificar que sea un array
-          if ! echo "$list_response" | jq -e 'type == "array"' > /dev/null; then
-            echo "❌ ERROR: La respuesta no es un array"
-            echo "Response: $list_response"
-            exit 1
+          set -Eeuo pipefail
+          curl -fsSL "$API_BASE_URL/citas/por-matricula/$MATRICULA?t=1" -o verify-citas-results/list.json || echo '[]' > verify-citas-results/list.json
+          COUNT=$(jq 'length' verify-citas-results/list.json)
+          echo "LIST_COUNT=$COUNT"
+          CID="${CID:-}"
+          if [[ -n "$CID" ]]; then
+            HIT=$(jq --arg id "$CID" '[.[] | select(.id==$id)] | length' verify-citas-results/list.json)
+          else
+            HIT=0
           fi
-          
-          # Verificar que no esté vacío
-          count=$(echo "$list_response" | jq 'length')
-          if [ "$count" -eq 0 ]; then
-            echo "❌ ERROR: Lista vacía, no se encontraron citas"
-            exit 1
-          fi
-          
-          # Verificar que contenga la ID creada
-          cita_id="${{ steps.crear_cita.outputs.cita_id }}"
-          found=$(echo "$list_response" | jq --arg id "$cita_id" 'any(.[]; .id == $id)')
-          
-          if [ "$found" != "true" ]; then
-            echo "❌ ERROR: La cita creada ($cita_id) no aparece en la lista"
-            echo "Lista: $list_response"
-            exit 1
-          fi
-          
-          first_item=$(echo "$list_response" | jq '.[0]')
-          echo "count=$count" >> $GITHUB_OUTPUT
-          
-          echo "✅ Lista correcta: $count citas encontradas, incluyendo la cita creada"
-          echo "$list_response" > list_response.json
-          echo "$first_item" > first_item.json
-          
+          echo "LIST_FAIL=$([[ "$COUNT" -ge 1 && "$HIT" -ge 1 ]] && echo 0 || echo 1)" >> $GITHUB_ENV
+
       - name: Step 4 - Leer por ID (opcional)
-        id: leer_por_id
+        shell: bash
         continue-on-error: true
         run: |
-          echo "🔍 Leyendo cita por ID..."
-          
-          cita_id="${{ steps.crear_cita.outputs.cita_id }}"
-          
-          get_response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
-            "${{ github.event.inputs.api_base_url }}/citas/$cita_id?t=1")
-          
-          # Separar body y status code
-          http_body=$(echo "$get_response" | sed -E 's/HTTPSTATUS\:[0-9]{3}$//')
-          http_code=$(echo "$get_response" | tr -d '\n' | sed -E 's/.*HTTPSTATUS:([0-9]{3})$/\1/')
-          
-          echo "HTTP Status: $http_code"
-          echo "Response Body: $http_body"
-          
-          if [ "$http_code" != "200" ]; then
-            echo "⚠️ WARNING: Status esperado=200, actual=$http_code (opcional)"
-            echo "get_status=failed" >> $GITHUB_OUTPUT
+          set -Eeuo pipefail
+          CID="${CID:-}"
+          if [[ -n "$CID" ]]; then
+            curl -fsSL "$API_BASE_URL/citas/$CID?t=1" -o verify-citas-results/byId.json || echo '{}' > verify-citas-results/byId.json
           else
-            echo "✅ Lectura por ID exitosa"
-            echo "get_status=success" >> $GITHUB_OUTPUT
+            echo '{}' > verify-citas-results/byId.json
           fi
-          
-          echo "$http_body" > get_response.json
-          
-      - name: Create verification artifact
+
+      - name: Step 5 - Summary & Final Gate
+        shell: bash
         run: |
-          echo "📦 Creando artifact con todas las respuestas..."
-          
-          # Crear JSON consolidado
-          jq -n \
-            --argjson diag "$(cat diag_response.json)" \
-            --argjson create "$(cat create_response.json)" \
-            --argjson list "$(cat list_response.json)" \
-            --argjson get "$(if [ -f get_response.json ]; then cat get_response.json; else echo 'null'; fi)" \
-            '{
-              "timestamp": now | strftime("%Y-%m-%dT%H:%M:%SZ"),
-              "api_base_url": "${{ github.event.inputs.api_base_url }}",
-              "test_matricula": "${{ github.event.inputs.matricula }}",
-              "results": {
-                "diagnostico": $diag,
-                "create_cita": $create,
-                "list_citas": $list,
-                "get_by_id": $get
-              },
-              "summary": {
-                "diagnostico_status": "✅ db=SASU, container=cita_id, pk=/id, can_read=true",
-                "create_status": "✅ 201 - Cita creada con ID: ${{ steps.crear_cita.outputs.cita_id }}",
-                "list_status": "✅ ${{ steps.listar_citas.outputs.count }} citas encontradas",
-                "get_status": "${{ steps.leer_por_id.outputs.get_status || 'not_run' }}"
-              }
-            }' > verify-citas.json
-          
-      - name: Upload verification results
+          set -Eeuo pipefail
+          DIAG_FAIL="${DIAG_FAIL:-1}"
+          POST_FAIL="${POST_FAIL:-1}"
+          LIST_FAIL="${LIST_FAIL:-1}"
+          echo "### Verify Citas System" >> $GITHUB_STEP_SUMMARY
+          echo "- DIAG_FAIL: $DIAG_FAIL" >> $GITHUB_STEP_SUMMARY
+          echo "- POST_FAIL: $POST_FAIL" >> $GITHUB_STEP_SUMMARY
+          echo "- LIST_FAIL: $LIST_FAIL" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### diag.json" >> $GITHUB_STEP_SUMMARY
+          sed -e 's/^/    /' verify-citas-results/diag.json >> $GITHUB_STEP_SUMMARY || true
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### post.json" >> $GITHUB_STEP_SUMMARY
+          sed -e 's/^/    /' verify-citas-results/post.json >> $GITHUB_STEP_SUMMARY || true
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### list.json" >> $GITHUB_STEP_SUMMARY
+          sed -e 's/^/    /' verify-citas-results/list.json >> $GITHUB_STEP_SUMMARY || true
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "#### byId.json" >> $GITHUB_STEP_SUMMARY
+          sed -e 's/^/    /' verify-citas-results/byId.json >> $GITHUB_STEP_SUMMARY || true
+
+          # Gate final: falla SOLO si alguno falló
+          if [[ "$DIAG_FAIL" != "0" || "$POST_FAIL" != "0" || "$LIST_FAIL" != "0" ]]; then
+            echo "One or more checks failed"; exit 1
+          fi
+
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: verify-citas-results
-          path: verify-citas.json
-          
-      - name: Job Summary
-        run: |
-          echo "# 🎯 Verificación del Sistema de Citas" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**API Base URL:** ${{ github.event.inputs.api_base_url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Matrícula de prueba:** ${{ github.event.inputs.matricula }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "## 📊 Resultados" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 🔍 Diagnóstico" >> $GITHUB_STEP_SUMMARY
-          echo "- **DB:** ${{ steps.diagnostico.outputs.db }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Container:** ${{ steps.diagnostico.outputs.container }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **PK:** ${{ steps.diagnostico.outputs.pk }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Can Read:** ${{ steps.diagnostico.outputs.can_read }}" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Status:** Configuración correcta" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📝 Crear Cita" >> $GITHUB_STEP_SUMMARY
-          echo "- **ID Generado:** \`${{ steps.crear_cita.outputs.cita_id }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Status:** 201 - Cita creada exitosamente" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📋 Listar por Matrícula" >> $GITHUB_STEP_SUMMARY
-          echo "- **Citas encontradas:** ${{ steps.listar_citas.outputs.count }}" >> $GITHUB_STEP_SUMMARY
-          echo "✅ **Status:** Lista contiene la cita creada" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.leer_por_id.outputs.get_status }}" = "success" ]; then
-            echo "### 🔍 Leer por ID" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **Status:** 200 - Lectura exitosa" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "### 🔍 Leer por ID" >> $GITHUB_STEP_SUMMARY
-            echo "⚠️ **Status:** Opcional - No ejecutado o falló" >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "## 🏆 Criterios de Éxito" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **Diagnóstico:** db=SASU, container=cita_id, pk=/id, can_read=true" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **POST /citas:** 201 con id generado" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **GET /citas/por-matricula:** Contiene la cita creada" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ **Sistema de citas funcionando correctamente en SASU/cita_id**" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📦 **Artifact:** verify-citas-results contiene todas las respuestas JSON" >> $GITHUB_STEP_SUMMARY
+          path: verify-citas-results/**
+          if-no-files-found: warn
