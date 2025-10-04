@@ -1,0 +1,32 @@
+name: Render Redeploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for redeploy'
+        required: false
+        default: 'Manual redeploy'
+
+jobs:
+  redeploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render Deploy
+        run: |
+          echo "Triggering Render redeploy..."
+          echo "Reason: ${{ github.event.inputs.reason }}"
+          
+          curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK }}" \
+            -H "Content-Type: application/json" \
+            -d '{"reason": "${{ github.event.inputs.reason }}"}'
+          
+          echo "Deploy hook triggered successfully"
+          echo "Check Render dashboard for deployment status"
+          
+      - name: Deploy Status
+        run: |
+          echo "✅ Render redeploy initiated"
+          echo "🔍 Monitor deployment at: https://dashboard.render.com/"
+          echo "📋 Expected log: APP_BOOT db=SASU container_citas=citas_id pk=/id"
+          echo "🧪 Test endpoint: https://fastapi-backend-o7ks.onrender.com/_diag/citas"

@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: fastapi-backend-o7ks
+    env: python
+    buildCommand: pip install -r temp_backend/requirements.txt
+    startCommand: cd temp_backend && python main.py
+    healthCheckPath: /health
+    envVars:
+      # Cosmos DB Configuration for CITAS system
+      - key: COSMOS_DB
+        value: "SASU"
+      - key: COSMOS_CONTAINER_CITAS
+        value: "citas_id"
+      - key: COSMOS_PK_CITAS
+        value: "/id"
+      # Cosmos DB Secrets (configured in Render dashboard)
+      - key: COSMOS_ENDPOINT
+        fromSecret: COSMOS_ENDPOINT
+      - key: COSMOS_KEY
+        fromSecret: COSMOS_KEY
+    # Optional: keep existing configuration for carnets/notas
+    # Add other environment variables as needed
