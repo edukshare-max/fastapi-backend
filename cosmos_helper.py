@@ -74,3 +74,85 @@ class CosmosDBHelper:
                     raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
             
             raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
+
+
+# Helpers específicos para citas (contenedor citas_ida)
+def get_citas_container():
+    """Retorna el contenedor de citas"""
+    client = CosmosClient(COSMOS_URL, credential=COSMOS_KEY)
+    database = client.get_database_client(DB_NAME)
+    container_name = os.environ.get("COSMOS_CONTAINER_CITAS", "citas_ida")
+    return database.get_container_client(container_name)
+
+def get_citas_pk_path():
+    """Detecta el partition key path del contenedor de citas"""
+    pk_path = os.environ.get("COSMOS_PK_CITAS", "/id")
+    print(f"[DRY-RUN] PK path detectado: {pk_path}")
+    return pk_path
+
+def upsert_cita(doc):
+    """Helper seguro para upsert de citas"""
+    import uuid
+    from datetime import datetime
+    
+    container = get_citas_container()
+    pk_path = get_citas_pk_path()
+    
+    print(f"[DRY-RUN] upsert_cita - container: citas_ida, pk_path: {pk_path}")
+    print(f"[DRY-RUN] payload keys: {list(doc.keys())}")
+    
+    # Autocompletar campos según PK
+    if pk_path == "/id":
+        if not doc.get("id"):
+            doc["id"] = f"cita:{uuid.uuid4()}"
+            print(f"[DRY-RUN] Auto-generado ID: {doc['id']}")
+    elif pk_path == "/cita":
+        if not doc.get("cita"):
+            doc["cita"] = doc.get("matricula", "")
+            print(f"[DRY-RUN] Auto-generado cita: {doc['cita']}")
+    
+    # Timestamps
+    if not doc.get("createdAt"):
+        doc["createdAt"] = datetime.utcnow().isoformat() + "Z"
+    doc["updatedAt"] = datetime.utcnow().isoformat() + "Z"
+    
+    print(f"[DRY-RUN] Justo antes de upsert - container_target = citas_ida")
+    
+    try:
+        if pk_path == "/id":
+            partition_key = doc["id"]
+        elif pk_path == "/cita":
+            partition_key = doc["cita"]
+        else:
+            # Sin PK
+            result = container.upsert_item(doc)
+            print(f"[DRY-RUN] Upsert OK (sin PK): {result.get('id')}, _etag: {result.get('_etag')}")
+            return result
+        
+        # Con PK
+        try:
+            result = container.upsert_item(body=doc, partition_key=partition_key)
+        except TypeError:
+            # SDK antiguo
+            pk_field = pk_path.lstrip('/')
+            doc[pk_field] = partition_key
+            result = container.upsert_item(doc)
+        
+        print(f"[DRY-RUN] Upsert OK: status=created, id={result.get('id')}, _etag={result.get('_etag')}")
+        
+        # Verificación con read_item
+        try:
+            verify = container.read_item(item=result["id"], partition_key=partition_key)
+            print(f"[DRY-RUN] Verificación read_item en citas_ida: ✅ {verify.get('id')}")
+        except:
+            print(f"[DRY-RUN] Verificación read_item: ⚠️ No se pudo verificar")
+        
+        return result
+        
+    except CosmosHttpResponseError as e:
+        print(f"[DRY-RUN] Error upsert: {e.status_code}")
+        # Retry para 429 (throttling)
+        if e.status_code == 429:
+            time.sleep(0.2)
+            return upsert_cita(doc)  # Retry una vez
+        raise

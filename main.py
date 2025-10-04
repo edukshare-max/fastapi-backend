@@ -30,9 +30,11 @@ notas = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_NOTAS"], "/matricula"
 )
 
-# Importar y montar router de citas
-from routes_citas import router as citas_router
-app.include_router(citas_router)
+# Handlers directos para citas (contenedor citas_ida exclusivamente)
+from cosmos_helper import get_citas_container, get_citas_pk_path, upsert_cita
+from pydantic import BaseModel
+from typing import Optional
+import uuid
 
 # Modelo para las notas (campos opcionales con alias)
 class NotaModel(BaseModel):
@@ -172,6 +174,17 @@ def create_carnet(carnet: CarnetModel = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
+# Alias de expediente para compatibilidad con Flutter
+@app.get("/expediente/matricula/{matricula}")
+def get_expediente_by_matricula(matricula: str):
+    """Alias para búsqueda de carnet por matrícula"""
+    return get_carnet(matricula)
+
+@app.get("/expediente/{id}")
+def get_expediente_by_id(id: str):
+    """Alias para búsqueda de carnet por ID"""
+    return get_carnet(id)
+
 # Endpoint adicional para compatibilidad con Flutter (rutas originales)
 @app.options("/notas")
 @app.options("/notas/")
@@ -200,3 +213,104 @@ def health_check():
             "error": str(e),
             "cosmos_connected": False
         }
+
+
+# === RUTAS DE CITAS (contenedor citas_ida exclusivamente) ===
+
+class CitaModel(BaseModel):
+    id: Optional[str] = None
+    matricula: str
+    inicio: str  # ISO datetime
+    fin: str     # ISO datetime
+    motivo: str
+    departamento: Optional[str] = ""
+    estado: Optional[str] = "programada"
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+@app.post("/citas")
+def create_cita(cita: CitaModel):
+    try:
+        # DRY-RUN: Al entrar
+        container = get_citas_container()
+        pk_path = get_citas_pk_path()
+        cita_dict = cita.dict()
+        
+        print(f"[DRY-RUN] POST /citas - db: DakuSasu, container: citas_ida, pk_path: {pk_path}")
+        print(f"[DRY-RUN] payload keys: {list(cita_dict.keys())}")
+        
+        # Validar mínimos
+        if not all([cita_dict.get("matricula"), cita_dict.get("inicio"), 
+                   cita_dict.get("fin"), cita_dict.get("motivo")]):
+            raise HTTPException(status_code=400, detail="Campos requeridos: matricula, inicio, fin, motivo")
+        
+        # Usar helper exclusivo para citas
+        result = upsert_cita(cita_dict)
+        
+        return {"status": "created", "data": result}
+        
+    except CosmosHttpResponseError as e:
+        print(f"[DRY-RUN] Error Cosmos: {e.status_code}")
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
+    except Exception as e:
+        print(f"[DRY-RUN] Error general: {str(e)}")
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/citas/{cita_id}")
+def get_cita_by_id(cita_id: str):
+    try:
+        container = get_citas_container()
+        pk_path = get_citas_pk_path()
+        
+        print(f"[DRY-RUN] GET /citas/{cita_id} - leyendo desde citas_ida, pk_path: {pk_path}")
+        
+        if pk_path == "/id":
+            # Leer directo por partition key
+            result = container.read_item(item=cita_id, partition_key=cita_id)
+        else:
+            # Query cross-partition
+            query = "SELECT * FROM c WHERE c.id = @id"
+            params = [{"name": "@id", "value": cita_id}]
+            results = list(container.query_items(
+                query=query, 
+                parameters=params, 
+                enable_cross_partition_query=True
+            ))
+            if not results:
+                raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
+            result = results[0]
+        
+        print(f"[DRY-RUN] Cita encontrada en citas_ida: {result.get('id')}")
+        return result
+        
+    except CosmosHttpResponseError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/citas/por-matricula/{matricula}")
+def get_citas_by_matricula(matricula: str):
+    try:
+        container = get_citas_container()
+        
+        print(f"[DRY-RUN] GET /citas/por-matricula/{matricula} - leyendo desde citas_ida")
+        
+        # Query siempre en citas_ida
+        query = "SELECT * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC"
+        params = [{"name": "@m", "value": matricula}]
+        
+        results = list(container.query_items(
+            query=query,
+            parameters=params,
+            enable_cross_partition_query=True
+        ))
+        
+        print(f"[DRY-RUN] Citas encontradas en citas_ida: {len(results)}")
+        return results
+        
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": str(e)})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})

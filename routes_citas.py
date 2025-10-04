@@ -19,11 +19,6 @@ except ImportError:
 # Router para citas
 router = APIRouter()
 
-# Contenedor para citas - usar contenedor cita_id con PK /id (simplificado)
-citas = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id"), "/id"
-)
-
 def create_google_event(cita_data):
     """Crear evento en Google Calendar si está habilitado"""
     if not os.environ.get("GCAL_ENABLED", "false").lower() == "true":
@@ -87,9 +82,9 @@ def create_google_event(cita_data):
 # Router para citas
 router = APIRouter()
 
-# Contenedor para citas - usar mismo contenedor que carnets por simplicidad
+# Contenedor para citas - usar contenedor cita_id con PK /id (simplificado)
 citas = CosmosDBHelper(
-    os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
+    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id"), "/id"
 )
 
 # Modelo para las citas (simplificado - backend genera id automáticamente)
@@ -141,7 +136,7 @@ def create_cita(cita: CitaModel = Body(...)):
         return {"status": "created", "data": res, "id": cita_dict["id"]}
     except CosmosHttpResponseError as e:
         print(f"[POST /citas] Cosmos Error: {e.status_code} - {e.message}")
-        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message})
     except Exception as e:
         print(f"[POST /citas] Error: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
@@ -156,7 +151,7 @@ def get_citas_by_matricula(matricula: str):
         print(f"[GET /citas/por-matricula/{matricula}] Container: cita_id, Filter: cita:*, Results: {len(result)}")
         return result
     except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
@@ -169,6 +164,6 @@ def get_cita_by_id(cita_id: str):
     except CosmosHttpResponseError as e:
         if e.status_code == 404:
             raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
-        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})

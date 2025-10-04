@@ -1,0 +1,6 @@
+{
+    "salt":  "Wu3puP1LQdr2Ut9G6Qg/sg==",
+    "hash":  "JBrcCAZxg+B4ZOUb1ubs1URQradjl1M/0MZeQzbChD8=",
+    "iters":  150000,
+    "kdf":  "pbkdf2-hmac-sha256-256bit"
+}
