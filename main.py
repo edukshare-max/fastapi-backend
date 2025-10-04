@@ -32,9 +32,6 @@ notas = CosmosDBHelper(
 
 # Handlers directos para citas (contenedor citas_ida exclusivamente)
 from cosmos_helper import get_citas_container, get_citas_pk_path, upsert_cita
-from pydantic import BaseModel
-from typing import Optional
-import uuid
 
 # Modelo para las notas (campos opcionales con alias)
 class NotaModel(BaseModel):
