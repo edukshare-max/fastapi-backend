@@ -19,9 +19,9 @@ except ImportError:
 # Router para citas
 router = APIRouter()
 
-# Contenedor para citas - usar contenedor cita_id con PK /cita
+# Contenedor para citas - usar contenedor cita_id con PK /id (simplificado)
 citas = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id"), "/cita"
+    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id"), "/id"
 )
 
 def create_google_event(cita_data):
@@ -92,11 +92,10 @@ citas = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
 )
 
-# Modelo para las citas
+# Modelo para las citas (simplificado - backend genera id automáticamente)
 class CitaModel(BaseModel):
     id: Optional[str] = None
     matricula: str
-    cita: Optional[str] = None  # PK para contenedor cita_ida
     inicio: str  # ISO datetime
     fin: str     # ISO datetime
     motivo: str
@@ -114,16 +113,13 @@ class CitaModel(BaseModel):
 def create_cita(cita: CitaModel = Body(...)):
     try:
         # DRY-RUN: Log al entrar
-        print(f"[DRY-RUN POST /citas] container_target=cita_id, pk_path=/cita, Payload keys: {list(cita.dict().keys())}")
+        print(f"[DRY-RUN POST /citas] container_target=cita_id, pk_path=/id, Payload keys: {list(cita.dict().keys())}")
         
         # Auto-generar campos si no se proporcionan
         cita_dict = cita.dict()
         if not cita_dict.get("id"):
             cita_dict["id"] = f"cita:{uuid.uuid4()}"
             print(f"[DRY-RUN POST /citas] Autocomplete id: {cita_dict['id']}")
-        if not cita_dict.get("cita"):
-            cita_dict["cita"] = cita.matricula  # cita = matricula como fallback
-            print(f"[DRY-RUN POST /citas] Autocomplete cita: {cita_dict['cita']} (from matricula)")
         if not cita_dict.get("createdAt"):
             cita_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
         cita_dict["updatedAt"] = datetime.utcnow().isoformat() + "Z"
@@ -134,11 +130,11 @@ def create_cita(cita: CitaModel = Body(...)):
             cita_dict["googleEventId"] = google_event_id
             cita_dict["htmlLink"] = html_link
         
-        # Cosmos: upsert en cita_id con PK = /cita
-        res = citas.upsert_item(cita_dict, partition_value=cita_dict["cita"])
+        # Cosmos: upsert en cita_id con PK = /id (simplificado)
+        res = citas.upsert_item(cita_dict, partition_value=cita_dict["id"])
         
         gcal_status = "✅" if google_event_id else "⚠️"
-        print(f"[DRY-RUN POST /citas] container_cita_id.upsert_item(doc, partition_key={cita_dict['cita']})")
+        print(f"[DRY-RUN POST /citas] container_cita_id.upsert_item(doc, partition_key={cita_dict['id']})")
         print(f"[POST /citas] Status: 201, ID: {res.get('id')}, _etag: {res.get('_etag', 'N/A')}, GCAL: {gcal_status}")
         print("[DRY-RUN POST /citas] SUCCESS: Documento guardado en cita_id (NO en carnets_id)")
         
@@ -150,16 +146,29 @@ def create_cita(cita: CitaModel = Body(...)):
         print(f"[POST /citas] Error: {type(e).__name__}: {str(e)}")
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
-@router.get("/citas/{matricula}")
-def get_citas(matricula: str):
+@router.get("/citas/por-matricula/{matricula}")
+def get_citas_by_matricula(matricula: str):
     try:
         result = citas.query_items(
             "SELECT * FROM c WHERE c.matricula=@m AND STARTSWITH(c.id, 'cita:') ORDER BY c._ts DESC",
             params=[{"name": "@m", "value": matricula}]
         )
-        print(f"[GET /citas/{matricula}] Container: cita_id, Filter: cita:*, Results: {len(result)}")
+        print(f"[GET /citas/por-matricula/{matricula}] Container: cita_id, Filter: cita:*, Results: {len(result)}")
         return result
     except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@router.get("/citas/{cita_id}")
+def get_cita_by_id(cita_id: str):
+    try:
+        result = citas.get_by_id(cita_id)
+        print(f"[GET /citas/{cita_id}] Container: cita_id, Found: {result is not None}")
+        return result
+    except CosmosHttpResponseError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
