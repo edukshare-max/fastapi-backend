@@ -19,9 +19,9 @@ except ImportError:
 # Router para citas
 router = APIRouter()
 
-# Contenedor para citas - usar contenedor cita_ida con PK /cita
+# Contenedor para citas - usar contenedor cita_id con PK /cita
 citas = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_ida"), "/cita"
+    os.environ.get("COSMOS_CONTAINER_CITAS", "cita_id"), "/cita"
 )
 
 def create_google_event(cita_data):
@@ -114,19 +114,19 @@ class CitaModel(BaseModel):
 def create_cita(cita: CitaModel = Body(...)):
     try:
         # DRY-RUN: Log al entrar
-        print(f"[DRY-RUN POST /citas] Container: cita_ida, PK: /cita, Payload keys: {list(cita.dict().keys())}")
+        print(f"[DRY-RUN POST /citas] container_target=cita_id, pk_path=/cita, Payload keys: {list(cita.dict().keys())}")
         
         # Auto-generar campos si no se proporcionan
         cita_dict = cita.dict()
         if not cita_dict.get("id"):
             cita_dict["id"] = f"cita:{uuid.uuid4()}"
+            print(f"[DRY-RUN POST /citas] Autocomplete id: {cita_dict['id']}")
         if not cita_dict.get("cita"):
             cita_dict["cita"] = cita.matricula  # cita = matricula como fallback
+            print(f"[DRY-RUN POST /citas] Autocomplete cita: {cita_dict['cita']} (from matricula)")
         if not cita_dict.get("createdAt"):
             cita_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
         cita_dict["updatedAt"] = datetime.utcnow().isoformat() + "Z"
-        
-        print(f"[DRY-RUN POST /citas] Autocomplete: id={cita_dict['id']}, cita={cita_dict['cita']}")
         
         # Intentar crear evento en Google Calendar
         google_event_id, html_link = create_google_event(cita_dict)
@@ -134,12 +134,13 @@ def create_cita(cita: CitaModel = Body(...)):
             cita_dict["googleEventId"] = google_event_id
             cita_dict["htmlLink"] = html_link
         
-        # Cosmos: upsert en cita_ida con PK = /cita
+        # Cosmos: upsert en cita_id con PK = /cita
         res = citas.upsert_item(cita_dict, partition_value=cita_dict["cita"])
         
         gcal_status = "✅" if google_event_id else "⚠️"
-        print(f"[DRY-RUN POST /citas] upsert(doc, partitionKey={cita_dict['cita']}) in cita_ida")
+        print(f"[DRY-RUN POST /citas] container_cita_id.upsert_item(doc, partition_key={cita_dict['cita']})")
         print(f"[POST /citas] Status: 201, ID: {res.get('id')}, _etag: {res.get('_etag', 'N/A')}, GCAL: {gcal_status}")
+        print("[DRY-RUN POST /citas] SUCCESS: Documento guardado en cita_id (NO en carnets_id)")
         
         return {"status": "created", "data": res, "id": cita_dict["id"]}
     except CosmosHttpResponseError as e:
@@ -156,7 +157,7 @@ def get_citas(matricula: str):
             "SELECT * FROM c WHERE c.matricula=@m AND STARTSWITH(c.id, 'cita:') ORDER BY c._ts DESC",
             params=[{"name": "@m", "value": matricula}]
         )
-        print(f"[GET /citas/{matricula}] Container: cita_ida, Filter: cita:*, Results: {len(result)}")
+        print(f"[GET /citas/{matricula}] Container: cita_id, Filter: cita:*, Results: {len(result)}")
         return result
     except CosmosHttpResponseError as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
