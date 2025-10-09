@@ -90,7 +90,8 @@ def get_citas_container():
 def get_citas_pk_path():
     """Detecta el partition key path del contenedor de citas"""
     pk_path = os.environ.get("COSMOS_PK_CITAS", "/id")
-    print(f"[DRY-RUN] PK path detectado: {pk_path}")
+    if os.environ.get("DEBUG_CITAS", "false").lower() == "true":
+        print(f"[DRY-RUN] PK path detectado: {pk_path}")
     return pk_path
 
 def upsert_cita(doc):
@@ -102,25 +103,30 @@ def upsert_cita(doc):
     container = get_citas_container()
     pk_path = get_citas_pk_path()
     
-    print(f"[DRY-RUN] upsert_cita - container: cita_id, pk_path: {pk_path}")
-    print(f"[DRY-RUN] payload keys: {list(doc.keys())}")
+    debug_enabled = os.environ.get("DEBUG_CITAS", "false").lower() == "true"
+    if debug_enabled:
+        print(f"[DRY-RUN] upsert_cita - container: cita_id, pk_path: {pk_path}")
+        print(f"[DRY-RUN] payload keys: {list(doc.keys())}")
     
     # Autocompletar campos según PK
     if pk_path == "/id":
         if not doc.get("id"):
             doc["id"] = f"cita:{uuid.uuid4()}"
-            print(f"[DRY-RUN] Auto-generado ID: {doc['id']}")
+            if debug_enabled:
+                print(f"[DRY-RUN] Auto-generado ID: {doc['id']}")
     elif pk_path == "/cita":
         if not doc.get("cita"):
             doc["cita"] = doc.get("matricula", "")
-            print(f"[DRY-RUN] Auto-generado cita: {doc['cita']}")
+            if debug_enabled:
+                print(f"[DRY-RUN] Auto-generado cita: {doc['cita']}")
     
     # Timestamps
     if not doc.get("createdAt"):
         doc["createdAt"] = datetime.utcnow().isoformat() + "Z"
     doc["updatedAt"] = datetime.utcnow().isoformat() + "Z"
     
-    print(f"[DRY-RUN] Justo antes de upsert - container_target = citas_ida")
+    if debug_enabled:
+        print(f"[DRY-RUN] Justo antes de upsert - container_target = cita_id")
     
     try:
         if pk_path == "/id":
@@ -130,7 +136,8 @@ def upsert_cita(doc):
         else:
             # Sin PK
             result = container.upsert_item(doc)
-            print(f"[DRY-RUN] Upsert OK (sin PK): {result.get('id')}, _etag: {result.get('_etag')}")
+            if debug_enabled:
+                print(f"[DRY-RUN] Upsert OK (sin PK): {result.get('id')}, _etag: {result.get('_etag')}")
             return result
         
         # Con PK
@@ -142,19 +149,20 @@ def upsert_cita(doc):
             doc[pk_field] = partition_key
             result = container.upsert_item(doc)
         
-        print(f"[DRY-RUN] Upsert OK: status=created, id={result.get('id')}, _etag={result.get('_etag')}")
-        
-        # Verificación con read_item
-        try:
-            verify = container.read_item(item=result["id"], partition_key=partition_key)
-            print(f"[DRY-RUN] Verificación read_item en citas_ida: ✅ {verify.get('id')}")
-        except:
-            print(f"[DRY-RUN] Verificación read_item: ⚠️ No se pudo verificar")
+        if debug_enabled:
+            print(f"[DRY-RUN] Upsert OK: status=created, id={result.get('id')}, _etag={result.get('_etag')}")
+            # Verificación con read_item
+            try:
+                verify = container.read_item(item=result["id"], partition_key=partition_key)
+                print(f"[DRY-RUN] Verificación read_item en cita_id: ✅ {verify.get('id')}")
+            except:
+                print(f"[DRY-RUN] Verificación read_item: ⚠️ No se pudo verificar")
         
         return result
         
     except CosmosHttpResponseError as e:
-        print(f"[DRY-RUN] Error upsert: {e.status_code}")
+        if debug_enabled:
+            print(f"[DRY-RUN] Error upsert: {e.status_code}")
         # Retry para 429 (throttling)
         if e.status_code == 429:
             time.sleep(0.2)

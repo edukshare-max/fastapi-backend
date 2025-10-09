@@ -15,17 +15,18 @@ load_dotenv()
 
 app = FastAPI()
 
-# APP_BOOT: Log de startup para verificar configuración
-import subprocess
-try:
-    commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
-                                        cwd=os.path.dirname(__file__)).decode().strip()
-except:
-    commit_hash = "unknown"
+# Startup configuration check (only for DEBUG_CITAS)
+if os.environ.get("DEBUG_CITAS", "false").lower() == "true":
+    import subprocess
+    try:
+        commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
+                                            cwd=os.path.dirname(__file__)).decode().strip()
+    except:
+        commit_hash = "unknown"
 
-print(f"APP_BOOT db={os.environ.get('COSMOS_DB', 'NOT_SET')} "
-      f"container_citas={os.environ.get('COSMOS_CONTAINER_CITAS', 'NOT_SET')} "
-      f"pk={os.environ.get('COSMOS_PK_CITAS', 'NOT_SET')}")
+    print(f"APP_BOOT db={os.environ.get('COSMOS_DB', 'NOT_SET')} "
+          f"container_citas={os.environ.get('COSMOS_CONTAINER_CITAS', 'NOT_SET')} "
+          f"pk={os.environ.get('COSMOS_PK_CITAS', 'NOT_SET')}")
 
 # CORS para permitir requests del frontend
 app.add_middleware(
@@ -41,6 +42,9 @@ carnets = CosmosDBHelper(
 )
 notas = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_NOTAS"], "/matricula"
+)
+promociones_salud = CosmosDBHelper(
+    os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
 )
 
 # Handlers directos para citas (contenedor citas_ida exclusivamente)
@@ -86,26 +90,35 @@ class CarnetModel(BaseModel):
     class Config:
         populate_by_name = True
 
+# Modelo para promociones de salud
+class PromocionSaludModel(BaseModel):
+    id: Optional[str] = None
+    link: str
+    departamento: str
+    categoria: str
+    programa: str
+    matricula: Optional[str] = ""  # Matrícula del alumno (opcional)
+    destinatario: str  # "alumno" o "general"
+    autorizado: Optional[bool] = False
+    createdAt: Optional[str] = None
+    createdBy: Optional[str] = ""  # Usuario que creó la promoción
+    
+    class Config:
+        populate_by_name = True
+
 @app.get("/carnet/{id}")
 def get_carnet(id: str):
-    # DRY-RUN: Log de entrada
-    print(f"[DRY-RUN] Entrada: raw_id={id}")
-    
     # Normalizar id: si no empieza con carnet:, agregar prefijo
     normalized_id = id if id.startswith("carnet:") else f"carnet:{id}"
-    print(f"[DRY-RUN] normalized_id={normalized_id}, ruta=/carnet/{id}, contenedor=carnets")
     
     # Intento A: lectura directa por id normalizado
     try:
-        print(f"[DRY-RUN] Intento A: read_item(item={normalized_id}, partition_key={normalized_id})")
         data = carnets.get_by_id(normalized_id)
-        print(f"[DRY-RUN] Decisión: devolviendo carnet (encontrado por ID)")
         return data
     except CosmosHttpResponseError as e:
         # Intento B: Si NotFound → query por matricula excluyendo citas
         if e.status_code == 404:
             try:
-                print(f"[DRY-RUN] Intento B: query por matrícula={id} excluyendo citas")
                 results = carnets.query_items(
                     """SELECT TOP 1 * FROM c 
                        WHERE c.matricula = @m 
@@ -116,19 +129,15 @@ def get_carnet(id: str):
                     params=[{"name": "@m", "value": id}]
                 )
                 
-                print(f"[DRY-RUN] Query resultados: {len(results) if results else 0}")
                 if results:
-                    print(f"[DRY-RUN] Decisión: devolviendo carnet (encontrado por matrícula)")
                     return results[0]
                 else:
-                    print(f"[DRY-RUN] Decisión: 404 no encontrado")
                     raise HTTPException(status_code=404, detail={"code": 404, "message": "Carnet no encontrado"})
                     
             except CosmosHttpResponseError as fallback_error:
-                print(f"[DRY-RUN] Decisión: 404 no encontrado (error en query)")
-                raise HTTPException(status_code=fallback_error.status_code, detail={"code": fallback_error.status_code, "message": fallback_error.message})
+                raise HTTPException(status_code=fallback_error.status_code or 500, detail={"code": fallback_error.status_code or 500, "message": fallback_error.message or "Error en query"})
         else:
-            raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+            raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
@@ -227,7 +236,11 @@ def health_check():
 
 @app.get("/_diag/citas")
 def diagnose_citas():
-    """Endpoint de diagnóstico para verificar configuración de citas"""
+    """Endpoint de diagnóstico para verificar configuración de citas (solo con DEBUG_CITAS)"""
+    # Solo permitir acceso si DEBUG_CITAS está activado
+    if os.environ.get("DEBUG_CITAS", "false").lower() != "true":
+        raise HTTPException(status_code=404, detail={"code": 404, "message": "Endpoint no encontrado"})
+    
     try:
         from cosmos_helper import get_citas_container, get_citas_pk_path
         
@@ -244,7 +257,8 @@ def diagnose_citas():
             list(container.query_items("SELECT TOP 1 * FROM c", enable_cross_partition_query=True))
             can_read = True
         except Exception as e:
-            print(f"[DIAG] Error testing citas container: {e}")
+            if os.environ.get("DEBUG_CITAS", "false").lower() == "true":
+                print(f"[DIAG] Error testing citas container: {e}")
         
         return {
             "db": db_name,
@@ -291,9 +305,6 @@ def create_cita(cita: CitaModel):
         # Usar helper exclusivo para citas
         result = upsert_cita(cita_dict)
         
-        # DRY-RUN: Log breve con resultado
-        print(f"[DRY-RUN] container=cita_id pk=/id id={result.get('id')} status=201")
-        
         return {"status": "created", "data": result}
         
     except Exception as cosmos_error:
@@ -304,7 +315,6 @@ def create_cita(cita: CitaModel):
                 content={"error": "citas_unavailable", "detail": str(cosmos_error)}
             )
         # Otros errores
-        print(f"[DRY-RUN] Error general: {str(cosmos_error)}")
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(cosmos_error)})
 
 @app.get("/citas/{cita_id}")
@@ -313,8 +323,6 @@ def get_cita_by_id(cita_id: str):
         # Lazy init: obtener contenedor dentro del handler
         container = get_citas_container()
         pk_path = get_citas_pk_path()
-        
-        print(f"[DRY-RUN] GET /citas/{cita_id} - leyendo desde cita_id, pk_path: {pk_path}")
         
         if pk_path == "/id":
             # Leer directo por partition key
@@ -332,7 +340,6 @@ def get_cita_by_id(cita_id: str):
                 raise HTTPException(status_code=404, detail={"code": 404, "message": "Cita no encontrada"})
             result = results[0]
         
-        print(f"[DRY-RUN] Cita encontrada en cita_id: {result.get('id')}")
         return result
         
     except Exception as cosmos_error:
@@ -353,8 +360,6 @@ def get_citas_by_matricula(matricula: str):
         # Lazy init: obtener contenedor dentro del handler
         container = get_citas_container()
         
-        print(f"[DRY-RUN] GET /citas/por-matricula/{matricula} - leyendo desde cita_id")
-        
         # Query siempre en cita_id
         query = "SELECT * FROM c WHERE c.matricula = @m ORDER BY c._ts DESC"
         params = [{"name": "@m", "value": matricula}]
@@ -365,7 +370,6 @@ def get_citas_by_matricula(matricula: str):
             enable_cross_partition_query=True
         ))
         
-        print(f"[DRY-RUN] Citas encontradas en cita_id: {len(results)}")
         return results
         
     except Exception as cosmos_error:
@@ -377,3 +381,48 @@ def get_citas_by_matricula(matricula: str):
             )
         # Otros errores
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(cosmos_error)})
+
+# Endpoints para promociones de salud
+@app.post("/promociones-salud/")
+@app.post("/promociones-salud")
+def create_promocion_salud(promocion: PromocionSaludModel = Body(...)):
+    """Crear una nueva promoción de salud"""
+    try:
+        # Auto-generar campos si no se proporcionan
+        promocion_dict = promocion.dict()
+        if not promocion_dict.get("id"):
+            promocion_dict["id"] = f"promocion:{uuid.uuid4()}"
+        if not promocion_dict.get("createdAt"):
+            promocion_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
+        
+        # Cosmos: PK = /id
+        res = promociones_salud.upsert_item(promocion_dict, partition_value=promocion_dict["id"])
+        return res
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/promociones-salud/")
+def get_promociones_salud():
+    """Obtener todas las promociones de salud"""
+    try:
+        result = promociones_salud.query_items(
+            "SELECT * FROM c ORDER BY c.createdAt DESC"
+        )
+        return result
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.post("/promociones-salud/validate-supervisor")
+def validate_supervisor_key(key_data: dict = Body(...)):
+    """Validar clave de supervisor"""
+    supervisor_key = key_data.get("key", "")
+    valid_key = "UAGROcres2025"
+    
+    if supervisor_key == valid_key:
+        return {"valid": True, "message": "Clave válida"}
+    else:
+        return {"valid": False, "message": "Clave incorrecta"}
