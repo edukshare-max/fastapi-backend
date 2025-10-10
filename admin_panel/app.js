@@ -16,6 +16,12 @@ document.addEventListener('DOMContentLoaded', () => {
     authToken = localStorage.getItem('auth_token');
     const userData = localStorage.getItem('user_data');
     
+    // Inicializar autocompletados
+    setTimeout(() => {
+        crearAutocompletado('login-campus');
+        crearAutocompletado('form-campus');
+    }, 100);
+    
     if (authToken && userData) {
         try {
             currentUser = JSON.parse(userData);
@@ -68,10 +74,16 @@ function updateUserInfo() {
 document.getElementById('login-btn').addEventListener('click', async () => {
     const username = document.getElementById('login-username').value.trim();
     const password = document.getElementById('login-password').value;
-    const campus = document.getElementById('login-campus').value;
+    const campusInput = document.getElementById('login-campus');
+    const campus = campusInput.getSelectedValue ? campusInput.getSelectedValue() : null;
     
     if (!username || !password) {
         showError('login-error', 'Por favor complete todos los campos');
+        return;
+    }
+    
+    if (!campus) {
+        showError('login-error', 'Por favor selecciona una institución de las opciones sugeridas');
         return;
     }
     
@@ -327,11 +339,19 @@ document.getElementById('user-form').addEventListener('submit', async (e) => {
     const form = e.target;
     const isEditing = form.dataset.editingUserId;
     
+    const campusInput = document.getElementById('form-campus');
+    const campusValue = campusInput.getSelectedValue ? campusInput.getSelectedValue() : null;
+    
+    if (!campusValue) {
+        showError('form-error', 'Por favor selecciona una institución de las opciones sugeridas');
+        return;
+    }
+    
     const formData = {
         email: document.getElementById('form-email').value.trim(),
         nombre_completo: document.getElementById('form-nombre').value.trim(),
         rol: document.getElementById('form-rol').value,
-        campus: document.getElementById('form-campus').value,
+        campus: campusValue,
         departamento: document.getElementById('form-departamento').value.trim()
     };
     
@@ -469,7 +489,15 @@ async function editUser(userId) {
         document.getElementById('form-email').value = user.email;
         document.getElementById('form-nombre').value = user.nombre_completo;
         document.getElementById('form-rol').value = user.rol;
-        document.getElementById('form-campus').value = user.campus;
+        
+        // Establecer institución con autocompletado
+        const campusInput = document.getElementById('form-campus');
+        if (campusInput.setInstitucion) {
+            campusInput.setInstitucion(user.campus);
+        } else {
+            campusInput.value = user.campus;
+        }
+        
         document.getElementById('form-departamento').value = user.departamento;
         
         // Guardar userId en el formulario para saber que estamos editando
@@ -628,15 +656,9 @@ function getRoleLabel(rol) {
 }
 
 function getCampusLabel(campus) {
-    const labels = {
-        'llano-largo': 'Llano Largo',
-        'acapulco': 'Acapulco',
-        'chilpancingo': 'Chilpancingo',
-        'taxco': 'Taxco',
-        'iguala': 'Iguala',
-        'zihuatanejo': 'Zihuatanejo'
-    };
-    return labels[campus] || campus;
+    // Buscar en la lista de instituciones
+    const institucion = INSTITUCIONES.find(i => i.value === campus);
+    return institucion ? institucion.label : campus;
 }
 
 function formatDate(dateString) {
@@ -662,6 +684,269 @@ function formatDateTime(dateString) {
         minute: '2-digit',
         second: '2-digit'
     });
+}
+
+// ============================================
+// AUTOCOMPLETADO DE INSTITUCIONES
+// ============================================
+
+// Lista completa de instituciones UAGro (88 total)
+const INSTITUCIONES = [
+    // CRES - Campus Regionales (6)
+    { value: 'cres-cruz-grande', label: 'CRES Campus Cruz Grande (Costa Chica)', categoria: 'CRES' },
+    { value: 'cres-zumpango', label: 'CRES Campus Zumpango (Zona Centro)', categoria: 'CRES' },
+    { value: 'cres-taxco-viejo', label: 'CRES Campus Taxco el Viejo (Zona Norte)', categoria: 'CRES' },
+    { value: 'cres-huamuxtitlan', label: 'CRES Campus Huamuxtitlán (Montaña)', categoria: 'CRES' },
+    { value: 'cres-llano-largo', label: 'CRES Campus Llano Largo (Acapulco)', categoria: 'CRES' },
+    { value: 'cres-tecpan', label: 'CRES Campus Tecpán (Costa Grande)', categoria: 'CRES' },
+    
+    // Clínicas Universitarias (4)
+    { value: 'clinica-chilpancingo', label: 'Clínica Universitaria UAGro – Chilpancingo', categoria: 'Clínica' },
+    { value: 'clinica-acapulco', label: 'Clínica Universitaria UAGro – Acapulco', categoria: 'Clínica' },
+    { value: 'clinica-iguala', label: 'Clínica Universitaria UAGro – Iguala', categoria: 'Clínica' },
+    { value: 'clinica-ometepec', label: 'Servicio Médico Universitario – Ometepec', categoria: 'Clínica' },
+    
+    // Facultades - Centro (8)
+    { value: 'fac-gobierno', label: 'Facultad de Gobierno y Gestión Pública', categoria: 'Facultad' },
+    { value: 'fac-arquitectura', label: 'Facultad de Arquitectura y Urbanismo', categoria: 'Facultad' },
+    { value: 'fac-quimico', label: 'Facultad de Ciencias Químico Biológicas', categoria: 'Facultad' },
+    { value: 'fac-comunicacion', label: 'Facultad de Comunicación y Mercadotecnia', categoria: 'Facultad' },
+    { value: 'fac-derecho-chil', label: 'Facultad de Derecho (Chilpancingo)', categoria: 'Facultad' },
+    { value: 'fac-filosofia', label: 'Facultad de Filosofía y Letras', categoria: 'Facultad' },
+    { value: 'fac-ingenieria', label: 'Facultad de Ingeniería', categoria: 'Facultad' },
+    { value: 'fac-matematicas-centro', label: 'Facultad de Matemáticas (Centro)', categoria: 'Facultad' },
+    
+    // Facultades - Sur/Acapulco (10)
+    { value: 'fac-contaduria', label: 'Facultad de Contaduría y Administración', categoria: 'Facultad' },
+    { value: 'fac-derecho-aca', label: 'Facultad de Derecho (Acapulco)', categoria: 'Facultad' },
+    { value: 'fac-ecologia', label: 'Facultad de Ecología Marina', categoria: 'Facultad' },
+    { value: 'fac-economia', label: 'Facultad de Economía (Campus Llano Largo)', categoria: 'Facultad' },
+    { value: 'fac-enfermeria2', label: 'Facultad de Enfermería No. 2', categoria: 'Facultad' },
+    { value: 'fac-matematicas-sur', label: 'Facultad de Matemáticas (Sur)', categoria: 'Facultad' },
+    { value: 'fac-lenguas', label: 'Facultad de Lenguas Extranjeras', categoria: 'Facultad' },
+    { value: 'fac-medicina', label: 'Facultad de Medicina', categoria: 'Facultad' },
+    { value: 'fac-odontologia', label: 'Facultad de Odontología', categoria: 'Facultad' },
+    { value: 'fac-turismo', label: 'Facultad de Turismo', categoria: 'Facultad' },
+    
+    // Facultades - Norte (2)
+    { value: 'fac-agropecuarias', label: 'Facultad de Ciencias Agropecuarias y Ambientales', categoria: 'Facultad' },
+    { value: 'fac-matematicas-norte', label: 'Facultad de Matemáticas (Norte)', categoria: 'Facultad' },
+    
+    // Preparatorias (50)
+    { value: 'prep-1', label: 'Escuela Preparatoria No. 1', categoria: 'Preparatoria' },
+    { value: 'prep-2', label: 'Escuela Preparatoria No. 2', categoria: 'Preparatoria' },
+    { value: 'prep-3', label: 'Escuela Preparatoria No. 3', categoria: 'Preparatoria' },
+    { value: 'prep-4', label: 'Escuela Preparatoria No. 4', categoria: 'Preparatoria' },
+    { value: 'prep-5', label: 'Escuela Preparatoria No. 5', categoria: 'Preparatoria' },
+    { value: 'prep-6', label: 'Escuela Preparatoria No. 6', categoria: 'Preparatoria' },
+    { value: 'prep-7', label: 'Escuela Preparatoria No. 7', categoria: 'Preparatoria' },
+    { value: 'prep-8', label: 'Escuela Preparatoria No. 8', categoria: 'Preparatoria' },
+    { value: 'prep-9', label: 'Escuela Preparatoria No. 9', categoria: 'Preparatoria' },
+    { value: 'prep-10', label: 'Escuela Preparatoria No. 10', categoria: 'Preparatoria' },
+    { value: 'prep-11', label: 'Escuela Preparatoria No. 11', categoria: 'Preparatoria' },
+    { value: 'prep-12', label: 'Escuela Preparatoria No. 12', categoria: 'Preparatoria' },
+    { value: 'prep-13', label: 'Escuela Preparatoria No. 13', categoria: 'Preparatoria' },
+    { value: 'prep-14', label: 'Escuela Preparatoria No. 14', categoria: 'Preparatoria' },
+    { value: 'prep-15', label: 'Escuela Preparatoria No. 15', categoria: 'Preparatoria' },
+    { value: 'prep-16', label: 'Escuela Preparatoria No. 16', categoria: 'Preparatoria' },
+    { value: 'prep-17', label: 'Escuela Preparatoria No. 17', categoria: 'Preparatoria' },
+    { value: 'prep-18', label: 'Escuela Preparatoria No. 18', categoria: 'Preparatoria' },
+    { value: 'prep-19', label: 'Escuela Preparatoria No. 19', categoria: 'Preparatoria' },
+    { value: 'prep-20', label: 'Escuela Preparatoria No. 20', categoria: 'Preparatoria' },
+    { value: 'prep-21', label: 'Escuela Preparatoria No. 21', categoria: 'Preparatoria' },
+    { value: 'prep-22', label: 'Escuela Preparatoria No. 22', categoria: 'Preparatoria' },
+    { value: 'prep-23', label: 'Escuela Preparatoria No. 23', categoria: 'Preparatoria' },
+    { value: 'prep-24', label: 'Escuela Preparatoria No. 24', categoria: 'Preparatoria' },
+    { value: 'prep-25', label: 'Escuela Preparatoria No. 25', categoria: 'Preparatoria' },
+    { value: 'prep-26', label: 'Escuela Preparatoria No. 26', categoria: 'Preparatoria' },
+    { value: 'prep-27', label: 'Escuela Preparatoria No. 27', categoria: 'Preparatoria' },
+    { value: 'prep-28', label: 'Escuela Preparatoria No. 28', categoria: 'Preparatoria' },
+    { value: 'prep-29', label: 'Escuela Preparatoria No. 29', categoria: 'Preparatoria' },
+    { value: 'prep-30', label: 'Escuela Preparatoria No. 30', categoria: 'Preparatoria' },
+    { value: 'prep-31', label: 'Escuela Preparatoria No. 31', categoria: 'Preparatoria' },
+    { value: 'prep-32', label: 'Escuela Preparatoria No. 32', categoria: 'Preparatoria' },
+    { value: 'prep-33', label: 'Escuela Preparatoria No. 33', categoria: 'Preparatoria' },
+    { value: 'prep-34', label: 'Escuela Preparatoria No. 34', categoria: 'Preparatoria' },
+    { value: 'prep-35', label: 'Escuela Preparatoria No. 35', categoria: 'Preparatoria' },
+    { value: 'prep-36', label: 'Escuela Preparatoria No. 36', categoria: 'Preparatoria' },
+    { value: 'prep-37', label: 'Escuela Preparatoria No. 37', categoria: 'Preparatoria' },
+    { value: 'prep-38', label: 'Escuela Preparatoria No. 38', categoria: 'Preparatoria' },
+    { value: 'prep-39', label: 'Escuela Preparatoria No. 39', categoria: 'Preparatoria' },
+    { value: 'prep-40', label: 'Escuela Preparatoria No. 40', categoria: 'Preparatoria' },
+    { value: 'prep-41', label: 'Escuela Preparatoria No. 41', categoria: 'Preparatoria' },
+    { value: 'prep-42', label: 'Escuela Preparatoria No. 42', categoria: 'Preparatoria' },
+    { value: 'prep-43', label: 'Escuela Preparatoria No. 43', categoria: 'Preparatoria' },
+    { value: 'prep-44', label: 'Escuela Preparatoria No. 44', categoria: 'Preparatoria' },
+    { value: 'prep-45', label: 'Escuela Preparatoria No. 45', categoria: 'Preparatoria' },
+    { value: 'prep-46', label: 'Escuela Preparatoria No. 46', categoria: 'Preparatoria' },
+    { value: 'prep-47', label: 'Escuela Preparatoria No. 47', categoria: 'Preparatoria' },
+    { value: 'prep-48', label: 'Escuela Preparatoria No. 48', categoria: 'Preparatoria' },
+    { value: 'prep-49', label: 'Escuela Preparatoria No. 49', categoria: 'Preparatoria' },
+    { value: 'prep-50', label: 'Escuela Preparatoria No. 50', categoria: 'Preparatoria' },
+    
+    // Rectoría y Coordinaciones Regionales (8)
+    { value: 'rectoria', label: 'Rectoría / Administración Central', categoria: 'Rectoría' },
+    { value: 'coord-sur', label: 'Coordinación Regional Zona Sur (Acapulco)', categoria: 'Coordinación' },
+    { value: 'coord-centro', label: 'Coordinación Regional Zona Centro', categoria: 'Coordinación' },
+    { value: 'coord-norte', label: 'Coordinación Regional Zona Norte', categoria: 'Coordinación' },
+    { value: 'coord-costa-chica', label: 'Coordinación Regional Costa Chica', categoria: 'Coordinación' },
+    { value: 'coord-costa-grande', label: 'Coordinación Regional Costa Grande', categoria: 'Coordinación' },
+    { value: 'coord-montana', label: 'Coordinación Regional Montaña', categoria: 'Coordinación' },
+    { value: 'coord-tierra-caliente', label: 'Coordinación Regional Tierra Caliente', categoria: 'Coordinación' }
+];
+
+/**
+ * Búsqueda fuzzy/flexible de instituciones
+ * Encuentra las mejores coincidencias basadas en el texto ingresado
+ */
+function buscarInstituciones(query, maxResults = 5) {
+    if (!query || query.trim() === '') {
+        return INSTITUCIONES.slice(0, maxResults);
+    }
+    
+    const queryLower = query.toLowerCase().trim();
+    const palabrasQuery = queryLower.split(/\s+/);
+    
+    // Calcular score de relevancia para cada institución
+    const resultados = INSTITUCIONES.map(inst => {
+        let score = 0;
+        const labelLower = inst.label.toLowerCase();
+        const categoriaLower = inst.categoria.toLowerCase();
+        
+        // Coincidencia exacta al inicio (máxima prioridad)
+        if (labelLower.startsWith(queryLower)) {
+            score += 100;
+        }
+        
+        // Contiene la búsqueda completa
+        if (labelLower.includes(queryLower)) {
+            score += 50;
+        }
+        
+        // Coincidencia en categoría
+        if (categoriaLower.includes(queryLower)) {
+            score += 30;
+        }
+        
+        // Coincidencia de palabras individuales
+        palabrasQuery.forEach(palabra => {
+            if (labelLower.includes(palabra)) {
+                score += 20;
+            }
+            // Coincidencia aproximada (primeras letras)
+            const palabrasLabel = labelLower.split(/\s+/);
+            palabrasLabel.forEach(palabraLabel => {
+                if (palabraLabel.startsWith(palabra)) {
+                    score += 10;
+                }
+            });
+        });
+        
+        // Coincidencia de números (para preparatorias)
+        const numeros = query.match(/\d+/g);
+        if (numeros) {
+            numeros.forEach(num => {
+                if (inst.value.includes(num)) {
+                    score += 40;
+                }
+            });
+        }
+        
+        return { ...inst, score };
+    });
+    
+    // Filtrar solo resultados con score > 0 y ordenar por relevancia
+    return resultados
+        .filter(r => r.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .slice(0, maxResults);
+}
+
+/**
+ * Crear componente de autocompletado para un input
+ */
+function crearAutocompletado(inputId, onSelect) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    
+    // Crear contenedor de sugerencias
+    const sugerenciasDiv = document.createElement('div');
+    sugerenciasDiv.className = 'autocomplete-suggestions';
+    sugerenciasDiv.id = `${inputId}-suggestions`;
+    input.parentNode.style.position = 'relative';
+    input.parentNode.appendChild(sugerenciasDiv);
+    
+    // Variable para almacenar el valor seleccionado
+    let valorSeleccionado = null;
+    
+    // Evento de escritura en el input
+    input.addEventListener('input', function() {
+        const query = this.value;
+        valorSeleccionado = null; // Reset al escribir
+        
+        if (query.length === 0) {
+            sugerenciasDiv.innerHTML = '';
+            sugerenciasDiv.style.display = 'none';
+            return;
+        }
+        
+        const resultados = buscarInstituciones(query, 5);
+        
+        if (resultados.length === 0) {
+            sugerenciasDiv.innerHTML = '<div class="autocomplete-item no-results">No se encontraron coincidencias</div>';
+            sugerenciasDiv.style.display = 'block';
+            return;
+        }
+        
+        // Generar HTML de sugerencias
+        sugerenciasDiv.innerHTML = resultados.map(inst => `
+            <div class="autocomplete-item" data-value="${inst.value}">
+                <span class="inst-label">${inst.label}</span>
+                <span class="inst-categoria">${inst.categoria}</span>
+            </div>
+        `).join('');
+        
+        sugerenciasDiv.style.display = 'block';
+        
+        // Eventos click en sugerencias
+        sugerenciasDiv.querySelectorAll('.autocomplete-item').forEach(item => {
+            item.addEventListener('click', function() {
+                const value = this.getAttribute('data-value');
+                const inst = INSTITUCIONES.find(i => i.value === value);
+                
+                if (inst) {
+                    input.value = inst.label;
+                    valorSeleccionado = inst.value;
+                    sugerenciasDiv.style.display = 'none';
+                    
+                    if (onSelect) {
+                        onSelect(inst.value, inst.label);
+                    }
+                }
+            });
+        });
+    });
+    
+    // Cerrar sugerencias al hacer clic fuera
+    document.addEventListener('click', function(e) {
+        if (!input.contains(e.target) && !sugerenciasDiv.contains(e.target)) {
+            sugerenciasDiv.style.display = 'none';
+        }
+    });
+    
+    // Función para obtener el valor seleccionado
+    input.getSelectedValue = function() {
+        return valorSeleccionado;
+    };
+    
+    // Función para establecer valor programáticamente
+    input.setInstitucion = function(value) {
+        const inst = INSTITUCIONES.find(i => i.value === value);
+        if (inst) {
+            input.value = inst.label;
+            valorSeleccionado = inst.value;
+        }
+    };
 }
 
 console.log('✅ SASU Admin Panel cargado correctamente');

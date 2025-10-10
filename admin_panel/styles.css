@@ -792,3 +792,96 @@ body {
         margin-left: 0;
     }
 }
+
+/* ============================================
+   AUTOCOMPLETADO DE INSTITUCIONES
+   ============================================ */
+
+.autocomplete-suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid var(--gray-300);
+    border-top: none;
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    max-height: 250px;
+    overflow-y: auto;
+    z-index: 1000;
+    display: none;
+    margin-top: -1px;
+}
+
+.autocomplete-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background-color 0.15s ease;
+    border-bottom: 1px solid var(--gray-100);
+}
+
+.autocomplete-item:last-child {
+    border-bottom: none;
+}
+
+.autocomplete-item:hover {
+    background-color: var(--gray-50);
+}
+
+.autocomplete-item.no-results {
+    color: var(--gray-500);
+    cursor: default;
+    font-style: italic;
+    justify-content: center;
+}
+
+.autocomplete-item.no-results:hover {
+    background-color: transparent;
+}
+
+.inst-label {
+    font-weight: 500;
+    color: var(--gray-900);
+    flex: 1;
+}
+
+.inst-categoria {
+    font-size: 0.75rem;
+    color: var(--gray-500);
+    background: var(--gray-100);
+    padding: 0.25rem 0.5rem;
+    border-radius: var(--radius-sm);
+    margin-left: 1rem;
+}
+
+/* Estilos para el input cuando tiene autocompletado */
+.form-group input[type="text"].autocomplete-input {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.form-group input[type="text"].autocomplete-input:focus {
+    border-color: var(--primary);
+    border-bottom-color: var(--gray-300);
+}
+
+/* Scroll personalizado para las sugerencias */
+.autocomplete-suggestions::-webkit-scrollbar {
+    width: 6px;
+}
+
+.autocomplete-suggestions::-webkit-scrollbar-track {
+    background: var(--gray-100);
+}
+
+.autocomplete-suggestions::-webkit-scrollbar-thumb {
+    background: var(--gray-400);
+    border-radius: 3px;
+}
+
+.autocomplete-suggestions::-webkit-scrollbar-thumb:hover {
+    background: var(--gray-500);
+}

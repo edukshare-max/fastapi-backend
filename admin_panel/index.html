@@ -39,15 +39,13 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="login-campus">Campus</label>
-                        <select id="login-campus">
-                            <option value="llano-largo">Llano Largo</option>
-                            <option value="acapulco">Acapulco</option>
-                            <option value="chilpancingo">Chilpancingo</option>
-                            <option value="taxco">Taxco</option>
-                            <option value="iguala">Iguala</option>
-                            <option value="zihuatanejo">Zihuatanejo</option>
-                        </select>
+                        <label for="login-campus">Institución</label>
+                        <input type="text" id="login-campus" class="autocomplete-input" 
+                               placeholder="Escribe para buscar... (ej: Llano Largo, Clínica, Prep 1)"
+                               autocomplete="off" required>
+                        <small style="color: #6c757d; font-size: 0.85rem;">
+                            💡 Escribe y selecciona de las opciones sugeridas
+                        </small>
                     </div>
 
                     <div id="login-error" class="error-message"></div>
@@ -161,13 +159,48 @@
                     </div>
                     
                     <select id="filter-campus" class="filter-select">
-                        <option value="">Todos los campus</option>
-                        <option value="llano-largo">Llano Largo</option>
-                        <option value="acapulco">Acapulco</option>
-                        <option value="chilpancingo">Chilpancingo</option>
-                        <option value="taxco">Taxco</option>
-                        <option value="iguala">Iguala</option>
-                        <option value="zihuatanejo">Zihuatanejo</option>
+                        <option value="">Todas las instituciones</option>
+                        <optgroup label="Campus Universitarios">
+                            <option value="llano-largo">Campus Llano Largo</option>
+                            <option value="acapulco">Campus Acapulco</option>
+                            <option value="chilpancingo">Campus Chilpancingo</option>
+                            <option value="taxco">Campus Taxco</option>
+                            <option value="iguala">Campus Iguala</option>
+                            <option value="zihuatanejo">Campus Zihuatanejo</option>
+                            <option value="costa-grande">Campus Costa Grande</option>
+                            <option value="costa-chica">Campus Costa Chica</option>
+                            <option value="norte">Campus Norte</option>
+                            <option value="centro">Campus Centro</option>
+                            <option value="tierra-caliente">Campus Tierra Caliente</option>
+                            <option value="montana">Campus Montaña</option>
+                        </optgroup>
+                        <optgroup label="Clínicas Universitarias">
+                            <option value="clinica-llano-largo">Clínica Llano Largo</option>
+                            <option value="clinica-acapulco">Clínica Acapulco</option>
+                            <option value="clinica-chilpancingo">Clínica Chilpancingo</option>
+                            <option value="clinica-taxco">Clínica Taxco</option>
+                            <option value="clinica-iguala">Clínica Iguala</option>
+                            <option value="clinica-zihuatanejo">Clínica Zihuatanejo</option>
+                        </optgroup>
+                        <optgroup label="Preparatorias">
+                            <option value="preparatoria-1">Preparatoria No. 1</option>
+                            <option value="preparatoria-2">Preparatoria No. 2</option>
+                            <option value="preparatoria-3">Preparatoria No. 3</option>
+                            <option value="preparatoria-4">Preparatoria No. 4</option>
+                            <option value="preparatoria-5">Preparatoria No. 5</option>
+                            <option value="preparatoria-6">Preparatoria No. 6</option>
+                            <option value="preparatoria-7">Preparatoria No. 7</option>
+                            <option value="preparatoria-8">Preparatoria No. 8</option>
+                            <option value="preparatoria-9">Preparatoria No. 9</option>
+                            <option value="preparatoria-10">Preparatoria No. 10</option>
+                            <option value="preparatoria-acapulco">Preparatoria Acapulco</option>
+                            <option value="preparatoria-chilpancingo">Preparatoria Chilpancingo</option>
+                        </optgroup>
+                        <optgroup label="Rectoría y Administración">
+                            <option value="rectoria">Rectoría</option>
+                            <option value="administracion-central">Administración Central</option>
+                            <option value="direccion-general">Dirección General</option>
+                        </optgroup>
                     </select>
 
                     <select id="filter-role" class="filter-select">
@@ -402,15 +435,13 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="form-campus">Campus *</label>
-                        <select id="form-campus" required>
-                            <option value="llano-largo">Llano Largo</option>
-                            <option value="acapulco">Acapulco</option>
-                            <option value="chilpancingo">Chilpancingo</option>
-                            <option value="taxco">Taxco</option>
-                            <option value="iguala">Iguala</option>
-                            <option value="zihuatanejo">Zihuatanejo</option>
-                        </select>
+                        <label for="form-campus">Institución *</label>
+                        <input type="text" id="form-campus" class="autocomplete-input" 
+                               placeholder="Escribe para buscar... (Campus, Clínica, Preparatoria, etc.)"
+                               autocomplete="off" required>
+                        <small style="color: #6c757d; font-size: 0.85rem;">
+                            💡 Muestra las 5 opciones más cercanas mientras escribes
+                        </small>
                     </div>
                 </div>
 
