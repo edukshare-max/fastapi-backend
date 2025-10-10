@@ -4,7 +4,7 @@ Modelos de datos para el sistema de autenticación y autorización.
 Incluye usuarios, roles, permisos y auditoría.
 """
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, validator
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -38,6 +38,14 @@ class UserCreate(BaseModel):
     rol: UserRole = Field(..., description="Rol del usuario en el sistema")
     campus: Campus = Field(..., description="Campus al que pertenece")
     departamento: str = Field(..., description="Departamento o área de trabajo")
+    
+    @validator('password')
+    def truncate_password(cls, v):
+        """Truncar contraseña a 72 bytes para bcrypt si es necesario."""
+        password_bytes = v.encode('utf-8')
+        if len(password_bytes) > 72:
+            v = password_bytes[:72].decode('utf-8', errors='ignore')
+        return v
 
 # Modelo de usuario en la base de datos
 class UserInDB(BaseModel):
