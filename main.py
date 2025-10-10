@@ -718,7 +718,8 @@ async def register_first_admin(user: UserCreate):
     try:
         # Verificar si ya hay usuarios (solo permitir si la DB está vacía)
         query = "SELECT VALUE COUNT(1) FROM c WHERE c.type = 'user'"
-        count = list(usuarios.query_items(query, [], False))[0]
+        result = usuarios.query_items(query)
+        count = result[0] if result else 0
         if count > 0:
             raise HTTPException(status_code=403, detail="Ya existen usuarios. Use el endpoint protegido.")
         
