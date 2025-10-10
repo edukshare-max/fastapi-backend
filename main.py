@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from cosmos_helper import CosmosDBHelper
 from azure.cosmos.exceptions import CosmosHttpResponseError
@@ -45,6 +46,11 @@ notas = CosmosDBHelper(
 )
 promociones_salud = CosmosDBHelper(
     os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
+)
+
+# Helper para vacunación (contenedor Tarjeta de vacunacion)
+vacunacion = CosmosDBHelper(
+    os.environ.get("COSMOS_CONTAINER_VACUNACION", "Tarjeta de vacunacion"), "/id"
 )
 
 # Handlers directos para citas (contenedor citas_ida exclusivamente)
@@ -102,6 +108,44 @@ class PromocionSaludModel(BaseModel):
     autorizado: Optional[bool] = False
     createdAt: Optional[str] = None
     createdBy: Optional[str] = ""  # Usuario que creó la promoción
+    
+    class Config:
+        populate_by_name = True
+
+# ============================================
+# MODELOS DE VACUNACIÓN
+# ============================================
+
+# Modelo para campañas de vacunación
+class VaccinationCampaignModel(BaseModel):
+    id: Optional[str] = None
+    nombre: str  # Nombre de la campaña
+    descripcion: Optional[str] = ""
+    vacuna: str  # Tipo de vacuna aplicada en esta campaña
+    fechaInicio: str  # Fecha de inicio de la campaña
+    fechaFin: Optional[str] = None  # Fecha de fin (opcional)
+    activa: Optional[bool] = True  # Estado de la campaña
+    createdAt: Optional[str] = None
+    createdBy: Optional[str] = ""  # Usuario que creó la campaña
+    totalAplicadas: Optional[int] = 0  # Contador de vacunas aplicadas
+    
+    class Config:
+        populate_by_name = True
+
+# Modelo para registros de vacunación
+class VaccinationRecordModel(BaseModel):
+    id: Optional[str] = None
+    campanaId: str  # ID de la campaña de vacunación
+    campanaNombre: Optional[str] = ""  # Nombre de la campaña (denormalizado)
+    matricula: str  # Matrícula del estudiante
+    nombreEstudiante: Optional[str] = ""  # Nombre del estudiante (opcional)
+    vacuna: str  # Vacuna aplicada
+    dosis: Optional[int] = 1  # Número de dosis (1, 2, 3, etc.)
+    lote: Optional[str] = ""  # Lote de la vacuna
+    aplicadoPor: Optional[str] = ""  # Nombre del aplicador
+    observaciones: Optional[str] = ""
+    fechaAplicacion: str  # Fecha en que se aplicó la vacuna
+    createdAt: Optional[str] = None
     
     class Config:
         populate_by_name = True
@@ -426,3 +470,519 @@ def validate_supervisor_key(key_data: dict = Body(...)):
         return {"valid": True, "message": "Clave válida"}
     else:
         return {"valid": False, "message": "Clave incorrecta"}
+
+# ============================================
+# ENDPOINTS DE VACUNACIÓN
+# ============================================
+
+@app.post("/vaccination-campaigns/")
+@app.post("/vaccination-campaigns")
+def create_vaccination_campaign(campaign: VaccinationCampaignModel = Body(...)):
+    """Crear una nueva campaña de vacunación"""
+    try:
+        # Auto-generar campos si no se proporcionan
+        campaign_dict = campaign.dict()
+        if not campaign_dict.get("id"):
+            campaign_dict["id"] = f"campana:{uuid.uuid4()}"
+        if not campaign_dict.get("createdAt"):
+            campaign_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
+        
+        # Cosmos: PK = /id
+        res = vacunacion.upsert_item(campaign_dict, partition_value=campaign_dict["id"])
+        return {"status": "created", "data": res, "id": campaign_dict["id"]}
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/vaccination-campaigns/")
+def get_vaccination_campaigns():
+    """Obtener todas las campañas de vacunación"""
+    try:
+        result = vacunacion.query_items(
+            "SELECT * FROM c WHERE STARTSWITH(c.id, 'campana:') ORDER BY c.createdAt DESC"
+        )
+        return result
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/vaccination-campaigns/{campaign_id}")
+def get_vaccination_campaign(campaign_id: str):
+    """Obtener una campaña específica"""
+    try:
+        # Normalizar id: si no empieza con campana:, agregar prefijo
+        normalized_id = campaign_id if campaign_id.startswith("campana:") else f"campana:{campaign_id}"
+        data = vacunacion.get_by_id(normalized_id)
+        return data
+    except CosmosHttpResponseError as e:
+        if e.status_code == 404:
+            raise HTTPException(status_code=404, detail={"code": 404, "message": "Campaña no encontrada"})
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.post("/vaccination-records/")
+@app.post("/vaccination-records")
+def create_vaccination_record(record: VaccinationRecordModel = Body(...)):
+    """Registrar una aplicación de vacuna"""
+    try:
+        # Auto-generar campos si no se proporcionan
+        record_dict = record.dict()
+        if not record_dict.get("id"):
+            record_dict["id"] = f"registro:{uuid.uuid4()}"
+        if not record_dict.get("createdAt"):
+            record_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
+        
+        # Cosmos: PK = /id
+        res = vacunacion.upsert_item(record_dict, partition_value=record_dict["id"])
+        
+        # Actualizar contador de la campaña
+        try:
+            campaign_id = record.campanaId
+            if not campaign_id.startswith("campana:"):
+                campaign_id = f"campana:{campaign_id}"
+            
+            campaign = vacunacion.get_by_id(campaign_id)
+            campaign["totalAplicadas"] = campaign.get("totalAplicadas", 0) + 1
+            vacunacion.upsert_item(campaign, partition_value=campaign_id)
+        except:
+            pass  # No crítico si falla actualizar el contador
+        
+        return {"status": "created", "data": res, "id": record_dict["id"]}
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/vaccination-records/campaign/{campaign_id}")
+def get_vaccination_records_by_campaign(campaign_id: str):
+    """Obtener todos los registros de una campaña específica"""
+    try:
+        # Normalizar id
+        normalized_id = campaign_id if campaign_id.startswith("campana:") else f"campana:{campaign_id}"
+        
+        result = vacunacion.query_items(
+            "SELECT * FROM c WHERE c.campanaId = @cid AND STARTSWITH(c.id, 'registro:') ORDER BY c.fechaAplicacion DESC",
+            params=[{"name": "@cid", "value": normalized_id}]
+        )
+        return result
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+@app.get("/vaccination-records/matricula/{matricula}")
+def get_vaccination_records_by_matricula(matricula: str):
+    """Obtener historial de vacunación de un estudiante"""
+    try:
+        result = vacunacion.query_items(
+            "SELECT * FROM c WHERE c.matricula = @m AND STARTSWITH(c.id, 'registro:') ORDER BY c.fechaAplicacion DESC",
+            params=[{"name": "@m", "value": matricula}]
+        )
+        return result
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+
+# ============================================================================
+# ENDPOINTS DE AUTENTICACIÓN Y AUTORIZACIÓN
+# ============================================================================
+
+from fastapi import Depends, Request
+from fastapi.security import OAuth2PasswordRequestForm
+from auth_models import (
+    UserCreate, UserResponse, UserInDB, UserUpdate, LoginRequest, Token, 
+    UserRole, Campus, AuditLog, AuditAction
+)
+from auth_service import (
+    AuthService, get_current_user, require_role, require_permission,
+    is_user_locked, should_lock_user, calculate_lockout_time,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from datetime import datetime, timedelta
+
+# Helper para contenedor de usuarios
+usuarios = CosmosDBHelper(
+    os.environ.get("COSMOS_CONTAINER_USUARIOS", "usuarios"), "/id"
+)
+
+# Helper para auditoría
+auditoria = CosmosDBHelper(
+    os.environ.get("COSMOS_CONTAINER_AUDITORIA", "auditoria"), "/id"
+)
+
+def log_audit(usuario: str, accion: AuditAction, recurso: str = None, detalles: str = None, ip: str = None):
+    """Registra una acción en el log de auditoría."""
+    try:
+        audit_id = f"audit:{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        log_entry = {
+            "id": audit_id,
+            "usuario": usuario,
+            "accion": accion.value,
+            "recurso": recurso,
+            "detalles": detalles,
+            "timestamp": datetime.utcnow().isoformat(),
+            "ip": ip
+        }
+        auditoria.create_item(log_entry)
+        print(f"📝 Auditoría: {usuario} → {accion.value}")
+    except Exception as e:
+        print(f"⚠️ Error al registrar auditoría: {e}")
+
+@app.post("/auth/init-admin", response_model=UserResponse, tags=["Autenticación"])
+async def initialize_first_admin(user: UserCreate):
+    """
+    Endpoint especial para crear el PRIMER usuario administrador del sistema.
+    Este endpoint se desactiva automáticamente después de crear el primer admin.
+    Solo funciona si NO existe ningún usuario admin en el sistema.
+    
+    **IMPORTANTE:** Por seguridad, este endpoint debe deshabilitarse en producción
+    después de crear el primer admin.
+    """
+    try:
+        # Verificar si ya existe algún admin
+        query = "SELECT * FROM c WHERE c.rol = 'admin' AND STARTSWITH(c.id, 'user:')"
+        existing_admins = usuarios.query_items(query, None)
+        
+        if existing_admins and len(existing_admins) > 0:
+            raise HTTPException(
+                status_code=403,
+                detail="El sistema ya tiene un administrador. Use /auth/register con credenciales de admin."
+            )
+        
+        # Solo permitir crear admin
+        if user.rol != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=400,
+                detail="Este endpoint solo permite crear el primer administrador"
+            )
+        
+        # Validar fortaleza de la contraseña
+        is_valid, message = AuthService.validate_password_strength(user.password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=message)
+        
+        # Generar ID único
+        user_id = AuthService.generate_user_id(user.username, user.campus)
+        
+        # Crear usuario admin
+        user_dict = {
+            "id": user_id,
+            "username": user.username,
+            "email": user.email,
+            "password_hash": AuthService.hash_password(user.password),
+            "nombre_completo": user.nombre_completo,
+            "rol": user.rol.value,
+            "campus": user.campus.value,
+            "departamento": user.departamento,
+            "activo": True,
+            "fecha_creacion": datetime.utcnow().isoformat(),
+            "ultimo_acceso": None,
+            "intentos_fallidos": 0,
+            "bloqueado_hasta": None
+        }
+        
+        usuarios.create_item(user_dict)
+        
+        # Auditoría
+        log_audit(
+            user.username,
+            AuditAction.USER_CREATE,
+            recurso=user_id,
+            detalles="Primer administrador del sistema creado",
+            ip="system-init"
+        )
+        
+        print(f"✅ Primer admin creado: {user.username}")
+        
+        user_response = UserResponse(**{k: v for k, v in user_dict.items() if k != "password_hash"})
+        return user_response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al inicializar admin: {str(e)}")
+
+@app.post("/auth/register", response_model=UserResponse, tags=["Autenticación"])
+async def register_user(user: UserCreate, current_user: UserResponse = Depends(require_role(UserRole.ADMIN))):
+    """
+    Registrar un nuevo usuario en el sistema.
+    Solo accesible para administradores.
+    """
+    try:
+        # Validar fortaleza de la contraseña
+        is_valid, message = AuthService.validate_password_strength(user.password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=message)
+        
+        # Generar ID único
+        user_id = AuthService.generate_user_id(user.username, user.campus)
+        
+        # Verificar si ya existe
+        try:
+            existing = usuarios.read_item(user_id, user_id)
+            if existing:
+                raise HTTPException(status_code=400, detail="El usuario ya existe")
+        except:
+            pass  # No existe, continuar
+        
+        # Crear usuario
+        user_dict = {
+            "id": user_id,
+            "username": user.username,
+            "email": user.email,
+            "password_hash": AuthService.hash_password(user.password),
+            "nombre_completo": user.nombre_completo,
+            "rol": user.rol.value,
+            "campus": user.campus.value,
+            "departamento": user.departamento,
+            "activo": True,
+            "fecha_creacion": datetime.utcnow().isoformat(),
+            "ultimo_acceso": None,
+            "intentos_fallidos": 0,
+            "bloqueado_hasta": None
+        }
+        
+        usuarios.create_item(user_dict)
+        
+        # Auditoría
+        log_audit(
+            current_user.username,
+            AuditAction.CREATE_USER,
+            user_id,
+            f"Creó usuario {user.username} con rol {user.rol.value}"
+        )
+        
+        # Retornar sin contraseña
+        return UserResponse(**{k: v for k, v in user_dict.items() if k != "password_hash"})
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al crear usuario: {str(e)}")
+
+@app.post("/auth/login", response_model=Token, tags=["Autenticación"])
+async def login(request: Request, login_data: LoginRequest):
+    """
+    Iniciar sesión y obtener token JWT.
+    """
+    try:
+        # Buscar usuario
+        user_id = AuthService.generate_user_id(login_data.username, login_data.campus or Campus.LLANO_LARGO)
+        
+        try:
+            user_dict = usuarios.read_item(user_id, user_id)
+            user = UserInDB(**user_dict)
+        except:
+            # Log intento fallido
+            log_audit(
+                login_data.username,
+                AuditAction.LOGIN_FAILED,
+                detalles="Usuario no encontrado",
+                ip=request.client.host if request.client else None
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Usuario o contraseña incorrectos"
+            )
+        
+        # Verificar si está bloqueado
+        if is_user_locked(user):
+            raise HTTPException(
+                status_code=403,
+                detail=f"Usuario bloqueado temporalmente por múltiples intentos fallidos. Intente después de {user.bloqueado_hasta}"
+            )
+        
+        # Verificar si está activo
+        if not user.activo:
+            raise HTTPException(
+                status_code=403,
+                detail="Usuario desactivado. Contacte al administrador."
+            )
+        
+        # Verificar contraseña
+        if not AuthService.verify_password(login_data.password, user.password_hash):
+            # Incrementar intentos fallidos
+            user_dict["intentos_fallidos"] = user.intentos_fallidos + 1
+            
+            if should_lock_user(user):
+                user_dict["bloqueado_hasta"] = calculate_lockout_time()
+                usuarios.upsert_item(user_dict)
+                log_audit(
+                    user.username,
+                    AuditAction.LOGIN_FAILED,
+                    detalles=f"Usuario bloqueado por {user.intentos_fallidos + 1} intentos fallidos",
+                    ip=request.client.host if request.client else None
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"Demasiados intentos fallidos. Usuario bloqueado por 30 minutos."
+                )
+            
+            usuarios.upsert_item(user_dict)
+            log_audit(
+                user.username,
+                AuditAction.LOGIN_FAILED,
+                detalles=f"Contraseña incorrecta (intento {user.intentos_fallidos + 1})",
+                ip=request.client.host if request.client else None
+            )
+            raise HTTPException(
+                status_code=401,
+                detail="Usuario o contraseña incorrectos"
+            )
+        
+        # Login exitoso - resetear intentos fallidos y actualizar último acceso
+        user_dict["intentos_fallidos"] = 0
+        user_dict["bloqueado_hasta"] = None
+        user_dict["ultimo_acceso"] = datetime.utcnow().isoformat()
+        usuarios.upsert_item(user_dict)
+        
+        # Crear token
+        access_token = AuthService.create_access_token(
+            data={
+                "sub": user.username,
+                "rol": user.rol.value,
+                "campus": user.campus.value
+            },
+            expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        )
+        
+        # Auditoría
+        log_audit(
+            user.username,
+            AuditAction.LOGIN,
+            detalles=f"Login exitoso desde {request.client.host if request.client else 'unknown'}",
+            ip=request.client.host if request.client else None
+        )
+        
+        # Retornar token y datos del usuario
+        user_response = UserResponse(**{k: v for k, v in user_dict.items() if k != "password_hash"})
+        return Token(access_token=access_token, user=user_response)
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en login: {str(e)}")
+
+@app.get("/auth/me", response_model=UserResponse, tags=["Autenticación"])
+async def get_current_user_info(current_user = Depends(get_current_user)):
+    """
+    Obtener información del usuario actual desde el token.
+    """
+    user_id = AuthService.generate_user_id(current_user.username, current_user.campus)
+    user_dict = usuarios.read_item(user_id, user_id)
+    return UserResponse(**{k: v for k, v in user_dict.items() if k != "password_hash"})
+
+@app.get("/auth/users", response_model=list[UserResponse], tags=["Gestión de Usuarios"])
+async def list_users(
+    campus: Optional[str] = None,
+    rol: Optional[str] = None,
+    current_user = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Listar todos los usuarios del sistema.
+    Solo accesible para administradores.
+    """
+    try:
+        query = "SELECT * FROM c WHERE STARTSWITH(c.id, 'user:')"
+        params = []
+        
+        if campus:
+            query += " AND c.campus = @campus"
+            params.append({"name": "@campus", "value": campus})
+        
+        if rol:
+            query += " AND c.rol = @rol"
+            params.append({"name": "@rol", "value": rol})
+        
+        users = usuarios.query_items(query, params if params else None)
+        return [UserResponse(**{k: v for k, v in u.items() if k != "password_hash"}) for u in users]
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al listar usuarios: {str(e)}")
+
+@app.patch("/auth/users/{user_id}", response_model=UserResponse, tags=["Gestión de Usuarios"])
+async def update_user(
+    user_id: str,
+    updates: UserUpdate,
+    current_user = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Actualizar información de un usuario.
+    Solo accesible para administradores.
+    """
+    try:
+        user_dict = usuarios.read_item(user_id, user_id)
+        
+        # Aplicar actualizaciones
+        update_data = updates.dict(exclude_unset=True)
+        for key, value in update_data.items():
+            if value is not None:
+                if key in ["rol", "campus"]:
+                    user_dict[key] = value.value if hasattr(value, "value") else value
+                else:
+                    user_dict[key] = value
+        
+        usuarios.upsert_item(user_dict)
+        
+        # Auditoría
+        log_audit(
+            current_user.username,
+            AuditAction.UPDATE_USER,
+            user_id,
+            f"Actualizó usuario: {update_data}"
+        )
+        
+        return UserResponse(**{k: v for k, v in user_dict.items() if k != "password_hash"})
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar usuario: {str(e)}")
+
+@app.get("/auth/audit-logs", tags=["Auditoría"])
+async def get_audit_logs(
+    usuario: Optional[str] = None,
+    accion: Optional[str] = None,
+    limit: int = 100,
+    current_user = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Obtener logs de auditoría del sistema.
+    Solo accesible para administradores.
+    """
+    try:
+        query = "SELECT * FROM c WHERE STARTSWITH(c.id, 'audit:') ORDER BY c.timestamp DESC"
+        params = []
+        
+        if usuario:
+            query = query.replace("WHERE", f"WHERE c.usuario = @usuario AND")
+            params.append({"name": "@usuario", "value": usuario})
+        
+        if accion:
+            if params:
+                query = query.replace("ORDER BY", f"AND c.accion = @accion ORDER BY")
+            else:
+                query = query.replace("WHERE", f"WHERE c.accion = @accion AND")
+            params.append({"name": "@accion", "value": accion})
+        
+        logs = auditoria.query_items(query, params if params else None, max_items=limit)
+        return logs
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al obtener logs: {str(e)}")
+
+# ============================================
+# SERVIR PANEL WEB DE ADMINISTRACIÓN
+# ============================================
+try:
+    app.mount("/admin", StaticFiles(directory="admin_panel", html=True), name="admin")
+    print("✅ Panel web admin disponible en /admin")
+except Exception as e:
+    print(f"⚠️  Panel web admin no disponible: {e}")
+
+print("✅ Endpoints de autenticación registrados")
+print(f"🔐 Roles disponibles: {[r.value for r in UserRole]}")
+print(f"🏫 Campus disponibles: {[c.value for c in Campus]}")

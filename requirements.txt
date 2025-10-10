@@ -5,3 +5,7 @@ azure-cosmos
 python-dotenv
 google-api-python-client
 google-auth
+# Seguridad y autenticación
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart

@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SASU - Panel de Administración</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Pantalla de Login -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <div class="login-card">
+                <!-- Logo UAGro -->
+                <div class="login-header">
+                    <div class="logo-circle">
+                        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                        </svg>
+                    </div>
+                    <h1>SASU</h1>
+                    <p class="subtitle">Sistema de Atención en Salud Universitaria</p>
+                    <p class="campus">CRES Llano Largo</p>
+                </div>
+
+                <!-- Formulario de Login -->
+                <div class="login-form">
+                    <h2>Panel de Administración</h2>
+                    
+                    <div class="form-group">
+                        <label for="login-username">Usuario</label>
+                        <input type="text" id="login-username" placeholder="Ingrese su usuario" autocomplete="username">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="login-password">Contraseña</label>
+                        <input type="password" id="login-password" placeholder="Ingrese su contraseña" autocomplete="current-password">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="login-campus">Campus</label>
+                        <select id="login-campus">
+                            <option value="llano-largo">Llano Largo</option>
+                            <option value="acapulco">Acapulco</option>
+                            <option value="chilpancingo">Chilpancingo</option>
+                            <option value="taxco">Taxco</option>
+                            <option value="iguala">Iguala</option>
+                            <option value="zihuatanejo">Zihuatanejo</option>
+                        </select>
+                    </div>
+
+                    <div id="login-error" class="error-message"></div>
+
+                    <button id="login-btn" class="btn btn-primary">
+                        <span>Iniciar Sesión</span>
+                        <div class="spinner" style="display: none;"></div>
+                    </button>
+                </div>
+
+                <div class="login-footer">
+                    <p>© 2025 Universidad Autónoma de Guerrero</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pantalla Principal (Dashboard) -->
+    <div id="dashboard-screen" class="screen">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo-small">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+                    </svg>
+                </div>
+                <div>
+                    <h3>SASU Admin</h3>
+                    <p id="user-campus" class="text-sm">Llano Largo</p>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active" data-view="users">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    <span>Usuarios</span>
+                </a>
+                
+                <a href="#" class="nav-item" data-view="audit">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10 9 9 9 8 9"></polyline>
+                    </svg>
+                    <span>Auditoría</span>
+                </a>
+
+                <a href="#" class="nav-item" data-view="settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M12 1v6m0 6v6m-8-8h6m6 0h6"></path>
+                    </svg>
+                    <span>Configuración</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="user-avatar">
+                        <span id="user-initials">A</span>
+                    </div>
+                    <div>
+                        <p class="user-name" id="user-name">Admin</p>
+                        <p class="user-role" id="user-role">Administrador</p>
+                    </div>
+                </div>
+                <button id="logout-btn" class="btn-icon" title="Cerrar sesión">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+                        <polyline points="16 17 21 12 16 7"></polyline>
+                        <line x1="21" y1="12" x2="9" y2="12"></line>
+                    </svg>
+                </button>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Vista de Usuarios -->
+            <div id="users-view" class="view active">
+                <div class="view-header">
+                    <div>
+                        <h1>Gestión de Usuarios</h1>
+                        <p class="text-muted">Administrar usuarios del sistema SASU</p>
+                    </div>
+                    <button id="new-user-btn" class="btn btn-primary">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                        Nuevo Usuario
+                    </button>
+                </div>
+
+                <!-- Filtros -->
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        <input type="text" id="user-search" placeholder="Buscar por nombre o usuario...">
+                    </div>
+                    
+                    <select id="filter-campus" class="filter-select">
+                        <option value="">Todos los campus</option>
+                        <option value="llano-largo">Llano Largo</option>
+                        <option value="acapulco">Acapulco</option>
+                        <option value="chilpancingo">Chilpancingo</option>
+                        <option value="taxco">Taxco</option>
+                        <option value="iguala">Iguala</option>
+                        <option value="zihuatanejo">Zihuatanejo</option>
+                    </select>
+
+                    <select id="filter-role" class="filter-select">
+                        <option value="">Todos los roles</option>
+                        <option value="admin">Administrador</option>
+                        <option value="medico">Médico</option>
+                        <option value="nutricion">Nutrición</option>
+                        <option value="psicologia">Psicología</option>
+                        <option value="odontologia">Odontología</option>
+                        <option value="enfermeria">Enfermería</option>
+                        <option value="recepcion">Recepción</option>
+                        <option value="lectura">Solo Lectura</option>
+                    </select>
+
+                    <button id="refresh-users-btn" class="btn-icon" title="Actualizar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Tabla de usuarios -->
+                <div class="card">
+                    <div id="users-loading" class="loading-state">
+                        <div class="spinner-large"></div>
+                        <p>Cargando usuarios...</p>
+                    </div>
+
+                    <div id="users-table-container" style="display: none;">
+                        <table id="users-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Usuario</th>
+                                    <th>Nombre</th>
+                                    <th>Rol</th>
+                                    <th>Campus</th>
+                                    <th>Departamento</th>
+                                    <th>Estado</th>
+                                    <th>Último Acceso</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="users-tbody">
+                                <!-- Usuarios se cargan dinámicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div id="users-empty" class="empty-state" style="display: none;">
+                        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+                            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="9" cy="7" r="4"></circle>
+                            <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                            <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                        </svg>
+                        <h3>No hay usuarios</h3>
+                        <p>Comienza creando tu primer usuario</p>
+                        <button class="btn btn-primary" onclick="document.getElementById('new-user-btn').click()">
+                            Crear Usuario
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vista de Auditoría -->
+            <div id="audit-view" class="view">
+                <div class="view-header">
+                    <div>
+                        <h1>Auditoría del Sistema</h1>
+                        <p class="text-muted">Historial de acciones y eventos</p>
+                    </div>
+                    <button id="export-audit-btn" class="btn btn-secondary">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                            <polyline points="7 10 12 15 17 10"></polyline>
+                            <line x1="12" y1="15" x2="12" y2="3"></line>
+                        </svg>
+                        Exportar CSV
+                    </button>
+                </div>
+
+                <!-- Filtros de Auditoría -->
+                <div class="filters-bar">
+                    <div class="search-box">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"></circle>
+                            <path d="m21 21-4.35-4.35"></path>
+                        </svg>
+                        <input type="text" id="audit-search" placeholder="Buscar por usuario...">
+                    </div>
+
+                    <select id="filter-action" class="filter-select">
+                        <option value="">Todas las acciones</option>
+                        <option value="LOGIN">Login</option>
+                        <option value="LOGOUT">Logout</option>
+                        <option value="LOGIN_FAILED">Login Fallido</option>
+                        <option value="CREATE_USER">Crear Usuario</option>
+                        <option value="UPDATE_USER">Actualizar Usuario</option>
+                        <option value="CREATE_CARNET">Crear Carnet</option>
+                        <option value="CREATE_NOTA">Crear Nota</option>
+                        <option value="CREATE_CITA">Crear Cita</option>
+                    </select>
+
+                    <input type="date" id="filter-date-from" class="filter-select">
+                    <input type="date" id="filter-date-to" class="filter-select">
+
+                    <button id="refresh-audit-btn" class="btn-icon" title="Actualizar">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="23 4 23 10 17 10"></polyline>
+                            <polyline points="1 20 1 14 7 14"></polyline>
+                            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Tabla de Auditoría -->
+                <div class="card">
+                    <div id="audit-loading" class="loading-state">
+                        <div class="spinner-large"></div>
+                        <p>Cargando logs...</p>
+                    </div>
+
+                    <div id="audit-table-container" style="display: none;">
+                        <table id="audit-table" class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Fecha/Hora</th>
+                                    <th>Usuario</th>
+                                    <th>Acción</th>
+                                    <th>Recurso</th>
+                                    <th>Detalles</th>
+                                    <th>IP</th>
+                                </tr>
+                            </thead>
+                            <tbody id="audit-tbody">
+                                <!-- Logs se cargan dinámicamente -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vista de Configuración -->
+            <div id="settings-view" class="view">
+                <div class="view-header">
+                    <h1>Configuración</h1>
+                    <p class="text-muted">Opciones del sistema</p>
+                </div>
+
+                <div class="card">
+                    <h3>Información del Sistema</h3>
+                    <div class="settings-grid">
+                        <div class="setting-item">
+                            <label>Versión del Sistema</label>
+                            <p class="value">2.0.0-auth</p>
+                        </div>
+                        <div class="setting-item">
+                            <label>Backend API</label>
+                            <p class="value" id="api-url">-</p>
+                        </div>
+                        <div class="setting-item">
+                            <label>Total de Usuarios</label>
+                            <p class="value" id="total-users">-</p>
+                        </div>
+                        <div class="setting-item">
+                            <label>Eventos de Auditoría</label>
+                            <p class="value" id="total-audit">-</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Acciones del Sistema</h3>
+                    <button class="btn btn-secondary" onclick="location.reload()">
+                        Recargar Panel
+                    </button>
+                    <button class="btn btn-danger" id="clear-cache-btn">
+                        Limpiar Caché Local
+                    </button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal para Crear/Editar Usuario -->
+    <div id="user-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Nuevo Usuario</h2>
+                <button class="modal-close" onclick="closeUserModal()">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+
+            <form id="user-form" class="modal-body">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-username">Usuario *</label>
+                        <input type="text" id="form-username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="form-email">Email *</label>
+                        <input type="email" id="form-email" required>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="form-nombre">Nombre Completo *</label>
+                    <input type="text" id="form-nombre" required>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="form-rol">Rol *</label>
+                        <select id="form-rol" required>
+                            <option value="">Seleccione un rol</option>
+                            <option value="admin">Administrador</option>
+                            <option value="medico">Médico</option>
+                            <option value="nutricion">Nutrición</option>
+                            <option value="psicologia">Psicología</option>
+                            <option value="odontologia">Odontología</option>
+                            <option value="enfermeria">Enfermería</option>
+                            <option value="recepcion">Recepción</option>
+                            <option value="lectura">Solo Lectura</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="form-campus">Campus *</label>
+                        <select id="form-campus" required>
+                            <option value="llano-largo">Llano Largo</option>
+                            <option value="acapulco">Acapulco</option>
+                            <option value="chilpancingo">Chilpancingo</option>
+                            <option value="taxco">Taxco</option>
+                            <option value="iguala">Iguala</option>
+                            <option value="zihuatanejo">Zihuatanejo</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="form-departamento">Departamento *</label>
+                    <input type="text" id="form-departamento" placeholder="Ej: Consultorio Médico" required>
+                </div>
+
+                <div id="password-section">
+                    <div class="form-group">
+                        <label for="form-password">Contraseña *</label>
+                        <input type="password" id="form-password" minlength="8">
+                        <small class="form-help">Mínimo 8 caracteres, con mayúsculas, minúsculas y números</small>
+                    </div>
+                </div>
+
+                <div id="form-error" class="error-message"></div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">
+                        <span>Guardar Usuario</span>
+                        <div class="spinner" style="display: none;"></div>
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

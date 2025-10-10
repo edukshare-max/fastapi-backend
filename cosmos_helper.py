@@ -22,6 +22,20 @@ class CosmosDBHelper:
             return self.container.read_item(item=id_value, partition_key=id_value)
         except CosmosHttpResponseError as e:
             raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
+    
+    def read_item(self, item_id, partition_key):
+        """Lee un item por ID y partition key."""
+        try:
+            return self.container.read_item(item=item_id, partition_key=partition_key)
+        except CosmosHttpResponseError as e:
+            raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
+    
+    def create_item(self, item):
+        """Crea un nuevo item en el contenedor."""
+        try:
+            return self.container.create_item(body=item)
+        except CosmosHttpResponseError as e:
+            raise CosmosHttpResponseError(status_code=e.status_code, message=e.message)
 
     def query_items(self, sql, params=None):
         try:
