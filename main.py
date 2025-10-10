@@ -878,7 +878,7 @@ async def login(request: Request, login_data: LoginRequest):
             
             if should_lock_user(user):
                 user_dict["bloqueado_hasta"] = calculate_lockout_time()
-                usuarios.upsert_item(user_dict)
+                usuarios.upsert_item(user_dict, user_id)
                 log_audit(
                     user.username,
                     AuditAction.LOGIN_FAILED,
@@ -890,7 +890,7 @@ async def login(request: Request, login_data: LoginRequest):
                     detail=f"Demasiados intentos fallidos. Usuario bloqueado por 30 minutos."
                 )
             
-            usuarios.upsert_item(user_dict)
+            usuarios.upsert_item(user_dict, user_id)
             log_audit(
                 user.username,
                 AuditAction.LOGIN_FAILED,
@@ -906,7 +906,7 @@ async def login(request: Request, login_data: LoginRequest):
         user_dict["intentos_fallidos"] = 0
         user_dict["bloqueado_hasta"] = None
         user_dict["ultimo_acceso"] = datetime.utcnow().isoformat()
-        usuarios.upsert_item(user_dict)
+        usuarios.upsert_item(user_dict, user_id)
         
         # Crear token
         access_token = AuthService.create_access_token(
@@ -994,7 +994,7 @@ async def update_user(
                 else:
                     user_dict[key] = value
         
-        usuarios.upsert_item(user_dict)
+        usuarios.upsert_item(user_dict, user_id)
         
         # Auditoría
         log_audit(
