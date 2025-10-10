@@ -48,14 +48,16 @@ notas = CosmosDBHelper(
 promociones_salud = CosmosDBHelper(
     os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
 )
+
+# Helper para tarjeta de vacunación individual (aplicaciones por estudiante)
+# Contenedor: Tarjeta_vacunacion, Partition Key: /matricula
+# Solo se guardan aplicaciones individuales, NO campañas (campañas son solo locales)
 tarjeta_vacunacion = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_VACUNACION", "tarjeta_vacunacion"), "/matricula"
+    os.environ.get("COSMOS_CONTAINER_VACUNACION", "Tarjeta_vacunacion"), "/matricula"
 )
 
-# Helper para vacunación (contenedor Tarjeta de vacunacion)
-vacunacion = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_VACUNACION", "Tarjeta de vacunacion"), "/id"
-)
+# Nota: Las campañas de vacunación NO se guardan en Cosmos DB
+# Se manejan localmente en el frontend y solo se genera PDF
 
 # Handlers directos para citas (contenedor citas_ida exclusivamente)
 from cosmos_helper import get_citas_container, get_citas_pk_path, upsert_cita
@@ -476,120 +478,43 @@ def validate_supervisor_key(key_data: dict = Body(...)):
         return {"valid": False, "message": "Clave incorrecta"}
 
 # ============================================
-# ENDPOINTS DE VACUNACIÓN
+# ENDPOINTS DE VACUNACIÓN (DESHABILITADOS)
 # ============================================
+# NOTA: Las campañas de vacunación se manejan SOLO localmente en el frontend.
+# No se guardan en Cosmos DB. Solo se genera PDF local.
+# Los únicos endpoints activos son los de aplicaciones individuales (/carnet/{matricula}/vacunacion)
 
-@app.post("/vaccination-campaigns/")
-@app.post("/vaccination-campaigns")
-def create_vaccination_campaign(campaign: VaccinationCampaignModel = Body(...)):
-    """Crear una nueva campaña de vacunación"""
-    try:
-        # Auto-generar campos si no se proporcionan
-        campaign_dict = campaign.dict()
-        if not campaign_dict.get("id"):
-            campaign_dict["id"] = f"campana:{uuid.uuid4()}"
-        if not campaign_dict.get("createdAt"):
-            campaign_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
-        
-        # Cosmos: PK = /id
-        res = vacunacion.upsert_item(campaign_dict, partition_value=campaign_dict["id"])
-        return {"status": "created", "data": res, "id": campaign_dict["id"]}
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.post("/vaccination-campaigns/")
+# @app.post("/vaccination-campaigns")
+# def create_vaccination_campaign(campaign: VaccinationCampaignModel = Body(...)):
+#     """[DESHABILITADO] Las campañas se manejan localmente"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Las campañas se manejan localmente.")
 
-@app.get("/vaccination-campaigns/")
-def get_vaccination_campaigns():
-    """Obtener todas las campañas de vacunación"""
-    try:
-        result = vacunacion.query_items(
-            "SELECT * FROM c WHERE STARTSWITH(c.id, 'campana:') ORDER BY c.createdAt DESC"
-        )
-        return result
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.get("/vaccination-campaigns/")
+# def get_vaccination_campaigns():
+#     """[DESHABILITADO] Las campañas se manejan localmente"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Las campañas se manejan localmente.")
 
-@app.get("/vaccination-campaigns/{campaign_id}")
-def get_vaccination_campaign(campaign_id: str):
-    """Obtener una campaña específica"""
-    try:
-        # Normalizar id: si no empieza con campana:, agregar prefijo
-        normalized_id = campaign_id if campaign_id.startswith("campana:") else f"campana:{campaign_id}"
-        data = vacunacion.get_by_id(normalized_id)
-        return data
-    except CosmosHttpResponseError as e:
-        if e.status_code == 404:
-            raise HTTPException(status_code=404, detail={"code": 404, "message": "Campaña no encontrada"})
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.get("/vaccination-campaigns/{campaign_id}")
+# def get_vaccination_campaign(campaign_id: str):
+#     """[DESHABILITADO] Las campañas se manejan localmente"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Las campañas se manejan localmente.")
 
-@app.post("/vaccination-records/")
-@app.post("/vaccination-records")
-def create_vaccination_record(record: VaccinationRecordModel = Body(...)):
-    """Registrar una aplicación de vacuna"""
-    try:
-        # Auto-generar campos si no se proporcionan
-        record_dict = record.dict()
-        if not record_dict.get("id"):
-            record_dict["id"] = f"registro:{uuid.uuid4()}"
-        if not record_dict.get("createdAt"):
-            record_dict["createdAt"] = datetime.utcnow().isoformat() + "Z"
-        
-        # Cosmos: PK = /id
-        res = vacunacion.upsert_item(record_dict, partition_value=record_dict["id"])
-        
-        # Actualizar contador de la campaña
-        try:
-            campaign_id = record.campanaId
-            if not campaign_id.startswith("campana:"):
-                campaign_id = f"campana:{campaign_id}"
-            
-            campaign = vacunacion.get_by_id(campaign_id)
-            campaign["totalAplicadas"] = campaign.get("totalAplicadas", 0) + 1
-            vacunacion.upsert_item(campaign, partition_value=campaign_id)
-        except:
-            pass  # No crítico si falla actualizar el contador
-        
-        return {"status": "created", "data": res, "id": record_dict["id"]}
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.post("/vaccination-records/")
+# @app.post("/vaccination-records")
+# def create_vaccination_record(record: VaccinationRecordModel = Body(...)):
+#     """[DESHABILITADO] Los registros se asocian directamente al estudiante"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Usar /carnet/{matricula}/vacunacion")
 
-@app.get("/vaccination-records/campaign/{campaign_id}")
-def get_vaccination_records_by_campaign(campaign_id: str):
-    """Obtener todos los registros de una campaña específica"""
-    try:
-        # Normalizar id
-        normalized_id = campaign_id if campaign_id.startswith("campana:") else f"campana:{campaign_id}"
-        
-        result = vacunacion.query_items(
-            "SELECT * FROM c WHERE c.campanaId = @cid AND STARTSWITH(c.id, 'registro:') ORDER BY c.fechaAplicacion DESC",
-            params=[{"name": "@cid", "value": normalized_id}]
-        )
-        return result
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.get("/vaccination-records/campaign/{campaign_id}")
+# def get_vaccination_records_by_campaign(campaign_id: str):
+#     """[DESHABILITADO] Los registros se consultan por matrícula"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Usar /carnet/{matricula}/vacunacion")
 
-@app.get("/vaccination-records/matricula/{matricula}")
-def get_vaccination_records_by_matricula(matricula: str):
-    """Obtener historial de vacunación de un estudiante"""
-    try:
-        result = vacunacion.query_items(
-            "SELECT * FROM c WHERE c.matricula = @m AND STARTSWITH(c.id, 'registro:') ORDER BY c.fechaAplicacion DESC",
-            params=[{"name": "@m", "value": matricula}]
-        )
-        return result
-    except CosmosHttpResponseError as e:
-        raise HTTPException(status_code=e.status_code or 500, detail={"code": e.status_code or 500, "message": e.message or "Error en cosmos"})
-    except Exception as e:
-        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+# @app.get("/vaccination-records/matricula/{matricula}")
+# def get_vaccination_records_by_matricula(matricula: str):
+#     """[DESHABILITADO] Usar el endpoint correcto del carnet"""
+#     raise HTTPException(status_code=501, detail="Endpoint deshabilitado. Usar /carnet/{matricula}/vacunacion")
 
 
 # ============================================================================
@@ -1063,10 +988,15 @@ class VacunacionAplicacion(BaseModel):
     timestamp: Optional[str] = None
 
 @app.post("/carnet/{matricula}/vacunacion")
-async def guardar_aplicacion_vacuna(matricula: str, aplicacion: VacunacionAplicacion):
+async def guardar_aplicacion_vacuna(
+    matricula: str, 
+    aplicacion: VacunacionAplicacion,
+    current_user: dict = Depends(get_current_user)
+):
     """
     Guarda una aplicación de vacuna en el expediente del estudiante.
     Se almacena en el contenedor tarjeta_vacunacion con partition key /matricula
+    Requiere autenticación JWT.
     """
     try:
         # Generar ID único si no viene
@@ -1115,10 +1045,14 @@ async def guardar_aplicacion_vacuna(matricula: str, aplicacion: VacunacionAplica
         raise HTTPException(status_code=500, detail=f"Error al guardar vacunación: {str(e)}")
 
 @app.get("/carnet/{matricula}/vacunacion")
-async def obtener_historial_vacunacion(matricula: str):
+async def obtener_historial_vacunacion(
+    matricula: str,
+    current_user: dict = Depends(get_current_user)
+):
     """
     Obtiene el historial completo de vacunación de un estudiante.
     Retorna todas las aplicaciones ordenadas por fecha.
+    Requiere autenticación JWT.
     """
     try:
         # Query para obtener todas las vacunaciones de este estudiante
