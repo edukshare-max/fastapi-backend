@@ -621,6 +621,7 @@ function getRoleLabel(rol) {
         'odontologia': 'Odontología',
         'enfermeria': 'Enfermería',
         'recepcion': 'Recepción',
+        'servicios_estudiantiles': 'Servicios Estudiantiles',
         'lectura': 'Solo Lectura'
     };
     return labels[rol] || rol;
