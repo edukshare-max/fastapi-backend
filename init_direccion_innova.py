@@ -17,7 +17,7 @@ admin_data = {
     "rol": "admin",
     "campus": "llano-largo",
     "departamento": "Dirección",
-    "password": "Uagro2025!Admin"
+    "password": "Uagro2025Admin"  # Simplificada sin caracteres especiales
 }
 
 print("=" * 70)
