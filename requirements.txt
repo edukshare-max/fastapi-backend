@@ -8,5 +8,6 @@ google-auth
 # Seguridad y autenticación
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt==4.0.1  # Versión compatible con passlib
 python-multipart
 email-validator
