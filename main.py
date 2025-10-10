@@ -1,3 +1,4 @@
+# Sistema de Autenticación CRES - v1.1
 from fastapi import FastAPI, HTTPException, Body
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -639,7 +640,6 @@ def ensure_auth_containers():
     Esto permite el bootstrap automático del sistema.
     """
     from azure.cosmos import CosmosClient, PartitionKey
-    from azure.cosmos.exceptions import CosmosResourceExistsError
     
     try:
         cosmos_url = os.environ["COSMOS_URL"]
@@ -649,34 +649,52 @@ def ensure_auth_containers():
         client = CosmosClient(cosmos_url, credential=cosmos_key)
         database = client.get_database_client(db_name)
         
+        # Obtener lista de contenedores existentes
+        existing_containers = {c['id'] for c in database.list_containers()}
+        print(f"📦 Contenedores existentes: {existing_containers}")
+        
         # Crear contenedor 'usuarios' si no existe
-        try:
-            database.create_container(
-                id="usuarios",
-                partition_key=PartitionKey(path="/id"),
-                offer_throughput=400
-            )
-            print("✅ Contenedor 'usuarios' creado")
-        except CosmosResourceExistsError:
+        if "usuarios" not in existing_containers:
+            try:
+                database.create_container(
+                    id="usuarios",
+                    partition_key=PartitionKey(path="/id"),
+                    offer_throughput=400
+                )
+                print("✅ Contenedor 'usuarios' creado")
+            except Exception as e:
+                error_msg = str(e)
+                if "Conflict" in error_msg or "409" in error_msg:
+                    print("ℹ️  Contenedor 'usuarios' ya existe (conflict)")
+                else:
+                    print(f"⚠️ Error creando 'usuarios': {error_msg}")
+                    raise
+        else:
             print("ℹ️  Contenedor 'usuarios' ya existe")
-        except Exception as e:
-            print(f"⚠️ Error verificando 'usuarios': {e}")
         
         # Crear contenedor 'auditoria' si no existe
-        try:
-            database.create_container(
-                id="auditoria",
-                partition_key=PartitionKey(path="/id"),
-                offer_throughput=400
-            )
-            print("✅ Contenedor 'auditoria' creado")
-        except CosmosResourceExistsError:
+        if "auditoria" not in existing_containers:
+            try:
+                database.create_container(
+                    id="auditoria",
+                    partition_key=PartitionKey(path="/id"),
+                    offer_throughput=400
+                )
+                print("✅ Contenedor 'auditoria' creado")
+            except Exception as e:
+                error_msg = str(e)
+                if "Conflict" in error_msg or "409" in error_msg:
+                    print("ℹ️  Contenedor 'auditoria' ya existe (conflict)")
+                else:
+                    print(f"⚠️ Error creando 'auditoria': {error_msg}")
+                    raise
+        else:
             print("ℹ️  Contenedor 'auditoria' ya existe")
-        except Exception as e:
-            print(f"⚠️ Error verificando 'auditoria': {e}")
             
     except Exception as e:
         print(f"❌ Error en ensure_auth_containers: {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 @app.post("/auth/init-admin", response_model=UserResponse, tags=["Autenticación"])
@@ -740,7 +758,7 @@ async def initialize_first_admin(user: UserCreate):
         # Auditoría
         log_audit(
             user.username,
-            AuditAction.USER_CREATE,
+            AuditAction.CREATE_USER,
             recurso=user_id,
             detalles="Primer administrador del sistema creado",
             ip="system-init"
