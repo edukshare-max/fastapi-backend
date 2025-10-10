@@ -13,11 +13,11 @@ API_BASE_URL = "https://fastapi-backend-o7ks.onrender.com"
 admin_data = {
     "username": "DireccionInnovaSalud",
     "email": "innovasalud@uagro.mx",
-    "nombre_completo": "Dirección Innova Salud",
+    "nombre_completo": "Direccion Innova Salud",  # Sin acento
     "rol": "admin",
     "campus": "llano-largo",
-    "departamento": "Dirección",
-    "password": "Uagro2025Admin"  # Simplificada sin caracteres especiales
+    "departamento": "Direccion",  # Sin acento
+    "password": "Admin2025"
 }
 
 print("=" * 70)

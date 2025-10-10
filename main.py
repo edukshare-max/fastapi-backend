@@ -48,6 +48,9 @@ notas = CosmosDBHelper(
 promociones_salud = CosmosDBHelper(
     os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
 )
+tarjeta_vacunacion = CosmosDBHelper(
+    os.environ.get("COSMOS_CONTAINER_VACUNACION", "tarjeta_vacunacion"), "/matricula"
+)
 
 # Helper para vacunación (contenedor Tarjeta de vacunacion)
 vacunacion = CosmosDBHelper(
@@ -1040,6 +1043,153 @@ async def get_audit_logs(
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al obtener logs: {str(e)}")
+
+# ============================================
+# ENDPOINTS DE VACUNACIÓN - TARJETA DE VACUNACIÓN
+# ============================================
+
+class VacunacionAplicacion(BaseModel):
+    """Modelo para registrar una aplicación de vacuna"""
+    id: Optional[str] = None
+    matricula: str
+    nombreEstudiante: Optional[str] = None
+    campana: str
+    vacuna: str
+    dosis: int
+    lote: Optional[str] = None
+    aplicadoPor: Optional[str] = None
+    fechaAplicacion: str  # ISO string
+    observaciones: Optional[str] = None
+    timestamp: Optional[str] = None
+
+@app.post("/carnet/{matricula}/vacunacion")
+async def guardar_aplicacion_vacuna(matricula: str, aplicacion: VacunacionAplicacion):
+    """
+    Guarda una aplicación de vacuna en el expediente del estudiante.
+    Se almacena en el contenedor tarjeta_vacunacion con partition key /matricula
+    """
+    try:
+        # Generar ID único si no viene
+        if not aplicacion.id:
+            aplicacion.id = f"vacuna_{matricula}_{int(datetime.now().timestamp() * 1000)}"
+        
+        # Generar timestamp si no viene
+        if not aplicacion.timestamp:
+            aplicacion.timestamp = datetime.now().isoformat()
+        
+        # Crear documento
+        documento = {
+            "id": aplicacion.id,
+            "matricula": matricula,  # Partition key
+            "nombreEstudiante": aplicacion.nombreEstudiante or "",
+            "campana": aplicacion.campana,
+            "vacuna": aplicacion.vacuna,
+            "dosis": aplicacion.dosis,
+            "lote": aplicacion.lote or "",
+            "aplicadoPor": aplicacion.aplicadoPor or "",
+            "fechaAplicacion": aplicacion.fechaAplicacion,
+            "observaciones": aplicacion.observaciones or "",
+            "timestamp": aplicacion.timestamp,
+            "tipo": "aplicacion_vacuna"  # Para filtrar después
+        }
+        
+        # Guardar en Cosmos DB
+        result = tarjeta_vacunacion.create_item(documento)
+        
+        print(f"✅ Vacunación guardada: {aplicacion.id} - {matricula} - {aplicacion.vacuna}")
+        
+        return JSONResponse(
+            status_code=201,
+            content={
+                "message": "Vacunación registrada exitosamente",
+                "id": aplicacion.id,
+                "matricula": matricula
+            }
+        )
+    
+    except CosmosHttpResponseError as e:
+        print(f"❌ Error Cosmos al guardar vacunación: {e.status_code} - {e.message}")
+        raise HTTPException(status_code=e.status_code or 500, detail=str(e.message))
+    except Exception as e:
+        print(f"❌ Error al guardar vacunación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al guardar vacunación: {str(e)}")
+
+@app.get("/carnet/{matricula}/vacunacion")
+async def obtener_historial_vacunacion(matricula: str):
+    """
+    Obtiene el historial completo de vacunación de un estudiante.
+    Retorna todas las aplicaciones ordenadas por fecha.
+    """
+    try:
+        # Query para obtener todas las vacunaciones de este estudiante
+        query = "SELECT * FROM c WHERE c.matricula = @matricula AND c.tipo = 'aplicacion_vacuna' ORDER BY c.fechaAplicacion DESC"
+        params = [{"name": "@matricula", "value": matricula}]
+        
+        items = tarjeta_vacunacion.query_items(query, params)
+        
+        # Convertir a lista
+        historial = list(items)
+        
+        print(f"📋 Historial de vacunación: {matricula} - {len(historial)} registros")
+        
+        return JSONResponse(
+            status_code=200,
+            content=historial
+        )
+    
+    except CosmosHttpResponseError as e:
+        print(f"❌ Error Cosmos al obtener historial: {e.status_code} - {e.message}")
+        raise HTTPException(status_code=e.status_code or 500, detail=str(e.message))
+    except Exception as e:
+        print(f"❌ Error al obtener historial: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener historial: {str(e)}")
+
+@app.get("/vacunacion/estadisticas")
+async def obtener_estadisticas_vacunacion():
+    """
+    Obtiene estadísticas globales de vacunación.
+    - Total de aplicaciones
+    - Por vacuna
+    - Por campaña
+    """
+    try:
+        # Obtener todas las aplicaciones
+        query = "SELECT * FROM c WHERE c.tipo = 'aplicacion_vacuna'"
+        items = list(tarjeta_vacunacion.query_items(query, []))
+        
+        # Calcular estadísticas
+        total_aplicaciones = len(items)
+        
+        # Por vacuna
+        vacunas = {}
+        campanas = {}
+        estudiantes = set()
+        
+        for item in items:
+            # Contar por vacuna
+            vacuna = item.get("vacuna", "Desconocida")
+            vacunas[vacuna] = vacunas.get(vacuna, 0) + 1
+            
+            # Contar por campaña
+            campana = item.get("campana", "Sin campaña")
+            campanas[campana] = campanas.get(campana, 0) + 1
+            
+            # Estudiantes únicos
+            estudiantes.add(item.get("matricula"))
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "totalAplicaciones": total_aplicaciones,
+                "estudiantesVacunados": len(estudiantes),
+                "porVacuna": vacunas,
+                "porCampana": campanas
+            }
+        )
+    
+    except Exception as e:
+        print(f"❌ Error al obtener estadísticas: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error al obtener estadísticas: {str(e)}")
 
 # ============================================
 # SERVIR PANEL WEB DE ADMINISTRACIÓN
