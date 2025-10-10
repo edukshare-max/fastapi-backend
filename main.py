@@ -633,6 +633,52 @@ def log_audit(usuario: str, accion: AuditAction, recurso: str = None, detalles: 
     except Exception as e:
         print(f"⚠️ Error al registrar auditoría: {e}")
 
+def ensure_auth_containers():
+    """
+    Verifica y crea los contenedores de autenticación si no existen.
+    Esto permite el bootstrap automático del sistema.
+    """
+    from azure.cosmos import CosmosClient, PartitionKey
+    from azure.cosmos.exceptions import CosmosResourceExistsError
+    
+    try:
+        cosmos_url = os.environ["COSMOS_URL"]
+        cosmos_key = os.environ["COSMOS_KEY"]
+        db_name = os.environ["COSMOS_DB"]
+        
+        client = CosmosClient(cosmos_url, credential=cosmos_key)
+        database = client.get_database_client(db_name)
+        
+        # Crear contenedor 'usuarios' si no existe
+        try:
+            database.create_container(
+                id="usuarios",
+                partition_key=PartitionKey(path="/id"),
+                offer_throughput=400
+            )
+            print("✅ Contenedor 'usuarios' creado")
+        except CosmosResourceExistsError:
+            print("ℹ️  Contenedor 'usuarios' ya existe")
+        except Exception as e:
+            print(f"⚠️ Error verificando 'usuarios': {e}")
+        
+        # Crear contenedor 'auditoria' si no existe
+        try:
+            database.create_container(
+                id="auditoria",
+                partition_key=PartitionKey(path="/id"),
+                offer_throughput=400
+            )
+            print("✅ Contenedor 'auditoria' creado")
+        except CosmosResourceExistsError:
+            print("ℹ️  Contenedor 'auditoria' ya existe")
+        except Exception as e:
+            print(f"⚠️ Error verificando 'auditoria': {e}")
+            
+    except Exception as e:
+        print(f"❌ Error en ensure_auth_containers: {e}")
+        raise
+
 @app.post("/auth/init-admin", response_model=UserResponse, tags=["Autenticación"])
 async def initialize_first_admin(user: UserCreate):
     """
@@ -644,6 +690,9 @@ async def initialize_first_admin(user: UserCreate):
     después de crear el primer admin.
     """
     try:
+        # Asegurar que existan los contenedores de autenticación
+        ensure_auth_containers()
+        
         # Verificar si ya existe algún admin
         query = "SELECT * FROM c WHERE c.rol = 'admin' AND STARTSWITH(c.id, 'user:')"
         existing_admins = usuarios.query_items(query, None)
