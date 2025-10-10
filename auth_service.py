@@ -21,7 +21,12 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 480  # 8 horas
 
 # Contexto para hash de contraseñas (bcrypt)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configurar bcrypt para truncar automáticamente contraseñas largas
+pwd_context = CryptContext(
+    schemes=["bcrypt"], 
+    deprecated="auto",
+    bcrypt__truncate_error=False  # No lanzar error, truncar automáticamente
+)
 
 # OAuth2 scheme para obtener el token del header
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
