@@ -13,6 +13,9 @@ from typing import Optional
 import uuid
 import json
 
+# Importar router de actualizaciones
+from update_routes import router as updates_router
+
 load_dotenv()
 
 app = FastAPI()
@@ -38,6 +41,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Montar router de actualizaciones
+app.include_router(updates_router)
 
 carnets = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
