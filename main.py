@@ -242,16 +242,16 @@ def create_nota(nota: NotaModel = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
-# Endpoint para crear carnets (con rutas alternativas) - SOLO ADMIN
+# Endpoint para crear carnets (con rutas alternativas) - TODOS LOS USUARIOS AUTENTICADOS
 @app.post("/carnet/")
 @app.post("/carnet")  # Alias sin slash final
 async def create_carnet(
     carnet: CarnetModel = Body(...),
-    current_user: dict = Depends(require_role(UserRole.ADMIN))
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Crear nuevo carnet de salud.
-    RESTRINGIDO: Solo administradores pueden crear carnets.
+    PERMITIDO: Todos los usuarios autenticados pueden crear carnets.
     """
     try:
         # Verificar que NO tenga ID (es creación nueva)
