@@ -24,27 +24,39 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Versión actual del sistema (la más reciente disponible)
 LATEST_VERSION = VersionInfo(
-    version="2.3.2",
+    version="2.4.0",
     build_number=1,
-    release_date="2025-10-10",
+    release_date="2025-10-11",
     channel="stable",
-    download_url="https://github.com/tu-usuario/tu-repo/releases/download/v2.3.2/CRES_Carnets_Setup_v2.3.2.exe",
-    file_size=85000000,  # ~85 MB (aproximado)
+    download_url="https://github.com/tu-usuario/tu-repo/releases/download/v2.4.0/CRES_Carnets_Setup_v2.4.0.exe",
+    file_size=88000000,  # ~88 MB (aproximado)
     checksum="",  # Se calculará después
     minimum_version="2.0.0",
     is_mandatory=False,
     changelog=[
-        "Sistema de distribución con instalador profesional",
-        "Versionamiento automático con VersionService",
-        "Pantalla 'Acerca de' con changelog completo",
-        "88 instituciones UAGro integradas",
-        "Dropdown de login con todas las instituciones",
-        "Colores institucionales UAGro aplicados"
+        "Odontograma Profesional dual: infantil (20 dientes) y adulto (32 dientes)",
+        "5 superficies por diente con click directo",
+        "14 condiciones dentales con colores profesionales",
+        "PDF A4 horizontal optimizado y centrado",
+        "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI",
+        "Mejoras UX: paneles optimizados, feedback inmediato, card discreta"
     ]
 )
 
 # Historial completo de versiones
 VERSION_HISTORY: List[ChangelogEntry] = [
+    ChangelogEntry(
+        version="2.4.0",
+        date="2025-10-11",
+        changes=[
+            "Odontograma Profesional dual: infantil (20 dientes) y adulto (32 dientes)",
+            "5 superficies por diente con click directo",
+            "14 condiciones dentales con colores profesionales",
+            "PDF A4 horizontal optimizado y centrado",
+            "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI",
+            "Mejoras UX: paneles optimizados, feedback inmediato, card discreta"
+        ]
+    ),
     ChangelogEntry(
         version="2.3.2",
         date="2025-10-10",
