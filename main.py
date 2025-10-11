@@ -1,20 +1,32 @@
 # Sistema de Autenticación CRES - v1.1
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from cosmos_helper import CosmosDBHelper
 from azure.cosmos.exceptions import CosmosHttpResponseError
 import os
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 import uuid
 import json
 
 # Importar router de actualizaciones
 from update_routes import router as updates_router
+
+# Importar modelos y servicios de autenticación
+from auth_models import (
+    UserCreate, UserResponse, UserInDB, UserUpdate, LoginRequest, Token, 
+    UserRole, Campus, AuditLog, AuditAction
+)
+from auth_service import (
+    AuthService, get_current_user, require_role, require_permission,
+    is_user_locked, should_lock_user, calculate_lockout_time,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
 
 load_dotenv()
 
@@ -230,20 +242,80 @@ def create_nota(nota: NotaModel = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
 
-# Endpoint para crear carnets (con rutas alternativas)
+# Endpoint para crear carnets (con rutas alternativas) - SOLO ADMIN
 @app.post("/carnet/")
 @app.post("/carnet")  # Alias sin slash final
-def create_carnet(carnet: CarnetModel = Body(...)):
+async def create_carnet(
+    carnet: CarnetModel = Body(...),
+    current_user: dict = Depends(require_role(UserRole.ADMIN))
+):
+    """
+    Crear nuevo carnet de salud.
+    RESTRINGIDO: Solo administradores pueden crear carnets.
+    """
     try:
-        # Auto-generar ID si no se proporciona
+        # Verificar que NO tenga ID (es creación nueva)
         carnet_dict = carnet.dict()
-        if not carnet_dict.get("id"):
-            carnet_dict["id"] = f"carnet:{uuid.uuid4()}"
+        if carnet_dict.get("id"):
+            raise HTTPException(
+                status_code=400, 
+                detail="Para editar un carnet existente use PUT /carnet/{id}"
+            )
+        
+        # Auto-generar ID para nuevo carnet
+        carnet_dict["id"] = f"carnet:{uuid.uuid4()}"
         
         # Cosmos: PK = /id
         res = carnets.upsert_item(carnet_dict, partition_value=carnet_dict["id"])
         
+        # Auditoría
+        log_audit(
+            current_user.get("username", "unknown"),
+            AuditAction.CREATE_CARNET,
+            recurso=carnet_dict["id"],
+            detalles=f"Carnet creado para matrícula: {carnet.matricula}"
+        )
+        
         return {"status": "created", "data": res, "id": carnet_dict["id"]}
+    except CosmosHttpResponseError as e:
+        raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail={"code": 500, "message": str(e)})
+
+# Endpoint para editar carnets existentes - TODOS LOS USUARIOS AUTENTICADOS
+@app.put("/carnet/{carnet_id}")
+async def update_carnet(
+    carnet_id: str,
+    carnet: CarnetModel = Body(...),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Editar carnet de salud existente.
+    PERMITIDO: Todos los usuarios autenticados pueden editar carnets.
+    """
+    try:
+        # Verificar que el carnet existe
+        try:
+            existing = carnets.read_item(carnet_id, carnet_id)
+        except:
+            raise HTTPException(status_code=404, detail="Carnet no encontrado")
+        
+        # Preparar datos actualizados manteniendo el ID original
+        carnet_dict = carnet.dict()
+        carnet_dict["id"] = carnet_id  # Forzar ID original
+        
+        # Actualizar en Cosmos
+        res = carnets.upsert_item(carnet_dict, partition_value=carnet_id)
+        
+        # Auditoría
+        log_audit(
+            current_user.get("username", "unknown"),
+            AuditAction.UPDATE_CARNET,
+            recurso=carnet_id,
+            detalles=f"Carnet editado para matrícula: {carnet.matricula}"
+        )
+        
+        return {"status": "updated", "data": res, "id": carnet_id}
     except CosmosHttpResponseError as e:
         raise HTTPException(status_code=e.status_code, detail={"code": e.status_code, "message": e.message})
     except Exception as e:
@@ -527,19 +599,6 @@ def validate_supervisor_key(key_data: dict = Body(...)):
 # ENDPOINTS DE AUTENTICACIÓN Y AUTORIZACIÓN
 # ============================================================================
 
-from fastapi import Depends, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from auth_models import (
-    UserCreate, UserResponse, UserInDB, UserUpdate, LoginRequest, Token, 
-    UserRole, Campus, AuditLog, AuditAction
-)
-from auth_service import (
-    AuthService, get_current_user, require_role, require_permission,
-    is_user_locked, should_lock_user, calculate_lockout_time,
-    ACCESS_TOKEN_EXPIRE_MINUTES
-)
-from datetime import datetime, timedelta
-
 # Helper para contenedor de usuarios
 usuarios = CosmosDBHelper(
     os.environ.get("COSMOS_CONTAINER_USUARIOS", "usuarios"), "/id"
@@ -550,7 +609,7 @@ auditoria = CosmosDBHelper(
     os.environ.get("COSMOS_CONTAINER_AUDITORIA", "auditoria"), "/id"
 )
 
-def log_audit(usuario: str, accion: AuditAction, recurso: str = None, detalles: str = None, ip: str = None):
+def log_audit(usuario: str, accion: AuditAction, recurso: Optional[str] = None, detalles: Optional[str] = None, ip: Optional[str] = None):
     """Registra una acción en el log de auditoría."""
     try:
         audit_id = f"audit:{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
