@@ -24,27 +24,39 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Versión actual del sistema (la más reciente disponible)
 LATEST_VERSION = VersionInfo(
-    version="2.4.0",
+    version="2.4.1",
     build_number=1,
     release_date="2025-10-11",
     channel="stable",
-    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/releases/download/v.2.4.0/CRES_Carnets_Windows_v2.4.0.zip",
+    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/releases/download/v.2.4.1/CRES_Carnets_Windows_v2.4.1.zip",
     file_size=16559636,  # ~15.8 MB
     checksum="",  # Se calculará después
     minimum_version="2.0.0",
     is_mandatory=False,
     changelog=[
+        "Fix: Instalación automática corregida - selección correcta del ejecutable",
         "Odontograma Profesional dual: infantil (20 dientes) y adulto (32 dientes)",
         "5 superficies por diente con click directo",
         "14 condiciones dentales con colores profesionales",
         "PDF A4 horizontal optimizado y centrado",
-        "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI",
-        "Mejoras UX: paneles optimizados, feedback inmediato, card discreta"
+        "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI"
     ]
 )
 
 # Historial completo de versiones
 VERSION_HISTORY: List[ChangelogEntry] = [
+    ChangelogEntry(
+        version="2.4.1",
+        date="2025-10-11",
+        changes=[
+            "Fix: Instalación automática corregida - selección correcta del ejecutable",
+            "Odontograma Profesional dual: infantil (20 dientes) y adulto (32 dientes)",
+            "5 superficies por diente con click directo",
+            "14 condiciones dentales con colores profesionales",
+            "PDF A4 horizontal optimizado y centrado",
+            "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI"
+        ]
+    ),
     ChangelogEntry(
         version="2.3.2",
         date="2025-10-10",
