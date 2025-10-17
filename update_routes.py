@@ -24,27 +24,37 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Versión actual del sistema (la más reciente disponible)
 LATEST_VERSION = VersionInfo(
-    version="2.4.1",
-    build_number=1,
-    release_date="2025-10-11",
+    version="2.4.17",
+    build_number=17,
+    release_date="2025-10-17",
     channel="stable",
-    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/releases/download/v.2.4.1/CRES_Carnets_Setup_v2.4.1.exe",
+    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/raw/master/releases/installers/CRES_Carnets_Setup_v2.4.17.exe",
     file_size=13828096,  # ~13.2 MB
     checksum="",  # Se calculará después
     minimum_version="2.0.0",
     is_mandatory=False,
     changelog=[
-        "Fix: Instalación automática corregida - selección correcta del ejecutable",
-        "Odontograma Profesional dual: infantil (20 dientes) y adulto (32 dientes)",
-        "5 superficies por diente con click directo",
-        "14 condiciones dentales con colores profesionales",
-        "PDF A4 horizontal optimizado y centrado",
-        "5 Tests de Psicología: Hamilton, Beck, DASS-21, Plutchik, MBI"
+        "🔄 Renovación automática de token JWT al expirar",
+        "✅ Sincronización de carnets locales sin errores 401",
+        "🧹 Botón para limpiar carnets ya sincronizados",
+        "📊 Contador de carnets sincronizados vs pendientes",
+        "🔍 Diagnósticos mejorados con detección de expiración de token"
     ]
 )
 
 # Historial completo de versiones
 VERSION_HISTORY: List[ChangelogEntry] = [
+    ChangelogEntry(
+        version="2.4.17",
+        date="2025-10-17",
+        changes=[
+            "🔄 Renovación automática de token JWT al expirar",
+            "✅ Sincronización de carnets locales sin errores 401",
+            "🧹 Botón para limpiar carnets ya sincronizados",
+            "📊 Contador de carnets sincronizados vs pendientes",
+            "🔍 Diagnósticos mejorados con detección de expiración de token"
+        ]
+    ),
     ChangelogEntry(
         version="2.4.1",
         date="2025-10-11",
