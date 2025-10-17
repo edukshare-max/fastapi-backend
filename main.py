@@ -270,7 +270,7 @@ async def create_carnet(
         
         # Auditoría
         log_audit(
-            current_user.get("username", "unknown"),
+            current_user.username if hasattr(current_user, 'username') else "unknown",
             AuditAction.CREATE_CARNET,
             recurso=carnet_dict["id"],
             detalles=f"Carnet creado para matrícula: {carnet.matricula}"
@@ -309,7 +309,7 @@ async def update_carnet(
         
         # Auditoría
         log_audit(
-            current_user.get("username", "unknown"),
+            current_user.username if hasattr(current_user, 'username') else "unknown",
             AuditAction.UPDATE_CARNET,
             recurso=carnet_id,
             detalles=f"Carnet editado para matrícula: {carnet.matricula}"
