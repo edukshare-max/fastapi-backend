@@ -24,26 +24,37 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Versión actual del sistema (la más reciente disponible)
 LATEST_VERSION = VersionInfo(
-    version="2.4.17",
-    build_number=17,
-    release_date="2025-10-17",
+    version="2.4.18",
+    build_number=18,
+    release_date="2025-10-21",
     channel="stable",
-    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/raw/master/releases/installers/CRES_Carnets_Setup_v2.4.17.exe",
-    file_size=13828096,  # ~13.2 MB
+    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/raw/master/releases/installers/CRES_Carnets_Setup_v2.4.18.exe",
+    file_size=13860864,  # ~13.22 MB
     checksum="",  # Se calculará después
     minimum_version="2.0.0",
     is_mandatory=False,
     changelog=[
-        "🔄 Renovación automática de token JWT al expirar",
-        "✅ Sincronización de carnets locales sin errores 401",
-        "🧹 Botón para limpiar carnets ya sincronizados",
-        "📊 Contador de carnets sincronizados vs pendientes",
-        "🔍 Diagnósticos mejorados con detección de expiración de token"
+        "� Sistema mejorado de guardado de notas",
+        "🛡️ Protección contra guardados duplicados",
+        "💬 Feedback visual claro: verde (nube), naranja (local), rojo (error)",
+        "� Botón inteligente con spinner durante guardado",
+        "� Sincronización con detalles de errores por nota"
     ]
 )
 
 # Historial completo de versiones
 VERSION_HISTORY: List[ChangelogEntry] = [
+    ChangelogEntry(
+        version="2.4.18",
+        date="2025-10-21",
+        changes=[
+            "🚀 Sistema mejorado de guardado de notas",
+            "🛡️ Protección contra guardados duplicados",
+            "💬 Feedback visual claro: verde (nube), naranja (local), rojo (error)",
+            "🔄 Botón inteligente con spinner durante guardado",
+            "📊 Sincronización con detalles de errores por nota"
+        ]
+    ),
     ChangelogEntry(
         version="2.4.17",
         date="2025-10-17",
