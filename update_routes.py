@@ -24,26 +24,35 @@ router = APIRouter(prefix="/updates", tags=["updates"])
 
 # Versión actual del sistema (la más reciente disponible)
 LATEST_VERSION = VersionInfo(
-    version="2.4.19",
-    build_number=19,
+    version="2.4.20",
+    build_number=20,
     release_date="2025-11-13",
     channel="stable",
-    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/raw/master/releases/installers/CRES_Carnets_Setup_v2.4.19.exe",
-    file_size=13858504,  # ~13.22 MB
+    download_url="https://github.com/edukshare-max/UPDATE_CRES_CARNET_/raw/master/releases/installers/CRES_Carnets_Setup_v2.4.20.exe",
+    file_size=13859237,  # ~13.22 MB
     checksum="",  # Se calculará después
     minimum_version="2.0.0",
     is_mandatory=False,
     changelog=[
+        "🔧 Fix: Timeout aumentado a 15 min para descargas",
         "⚡ Búsqueda paralela de carnets: 50% más rápida",
         "🚀 Caché inteligente: datos frescos al guardar",
         "⏱️ Búsqueda de notas optimizada: 40% más rápida",
-        "🎯 Debouncing en búsqueda: 90% menos llamadas",
-        "🔥 Experiencia fluida al guardar y corroborar carnets"
+        "🎯 Debouncing en búsqueda: 90% menos llamadas"
     ]
 )
 
 # Historial completo de versiones
 VERSION_HISTORY: List[ChangelogEntry] = [
+    ChangelogEntry(
+        version="2.4.20",
+        date="2025-11-13",
+        changes=[
+            "🔧 Fix crítico: Timeout de descarga aumentado a 15 minutos",
+            "📶 Mejor manejo de conexiones lentas durante actualizaciones",
+            "⚡ Todas las optimizaciones de v2.4.19 incluidas"
+        ]
+    ),
     ChangelogEntry(
         version="2.4.19",
         date="2025-11-13",
