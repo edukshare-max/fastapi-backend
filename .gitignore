@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
+_worktrees/
+releases/
 .env
 .env.*
 !.env.example
