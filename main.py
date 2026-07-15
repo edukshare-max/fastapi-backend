@@ -37,6 +37,14 @@ from update_routes import router as updates_router
 from appointment_routes import router as appointments_router
 from referral_routes import router as referrals_router
 from ticket_routes import router as tickets_router
+from multitenancy_audit import InMemoryAuditLogger
+from multitenancy_auth import InstitutionalAuthService
+from multitenancy_repositories import (
+    CosmosTenantAwareStudentRepository,
+    InMemoryTenantRepository,
+    InMemoryUserRepository,
+)
+from multitenancy_routes import create_multitenancy_router
 
 # Importar modelos y servicios de autenticación
 from auth_models import (
@@ -72,6 +80,18 @@ app.include_router(updates_router)
 app.include_router(appointments_router)
 app.include_router(referrals_router)
 app.include_router(tickets_router)
+
+if os.environ.get("ENABLE_MULTITENANT_ROUTES", "false").lower() == "true":
+    app.state.multitenant_auth_service = InstitutionalAuthService(
+        tenants=InMemoryTenantRepository([]),
+        users=InMemoryUserRepository([]),
+        audit_logger=InMemoryAuditLogger(),
+    )
+    app.include_router(
+        create_multitenancy_router(CosmosTenantAwareStudentRepository()),
+        prefix="/v2",
+        tags=["multitenancy"],
+    )
 
 carnets = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_CARNETS"], "/id"

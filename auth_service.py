@@ -190,5 +190,5 @@ def calculate_lockout_time() -> str:
     lockout_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
     return lockout_until.isoformat()
 
-print("✅ AuthService inicializado correctamente")
-print(f"🔐 Algoritmo: {ALGORITHM}, Expiración: {ACCESS_TOKEN_EXPIRE_MINUTES} minutos")
+print("AuthService inicializado correctamente")
+print(f"Algoritmo: {ALGORITHM}, Expiracion: {ACCESS_TOKEN_EXPIRE_MINUTES} minutos")
