@@ -14,18 +14,24 @@ from auth_service import AuthService
 @dataclass(frozen=True)
 class ContainerDefinition:
     name: str
-    partition_key: str
+    partition_key: str | tuple[str, ...]
     hierarchical_partition_key: bool = False
+
+    @property
+    def partition_key_paths(self) -> list[str]:
+        if isinstance(self.partition_key, tuple):
+            return list(self.partition_key)
+        return [self.partition_key]
 
 
 MULTITENANT_CONTAINERS: List[ContainerDefinition] = [
     ContainerDefinition("tenants_v2", "/id"),
     ContainerDefinition("users_v2", "/tenant_id"),
     ContainerDefinition("students_v2", "/tenant_id"),
-    ContainerDefinition("clinical_records_v2", "/tenant_id/student_id/id", True),
+    ContainerDefinition("clinical_records_v2", ("/tenant_id", "/student_id", "/id"), True),
     ContainerDefinition("appointments_v2", "/tenant_id"),
     ContainerDefinition("referrals_v2", "/tenant_id"),
-    ContainerDefinition("audit_logs_v2", "/tenant_id/month/id", True),
+    ContainerDefinition("audit_logs_v2", ("/tenant_id", "/month", "/id"), True),
     ContainerDefinition("licenses_v2", "/tenant_id"),
 ]
 

@@ -19,7 +19,7 @@ def build_plan(supports_hpk: bool) -> list[dict]:
         plan.append(
             {
                 "container": definition.name,
-                "partition_key": definition.partition_key,
+                "partition_key": definition.partition_key_paths,
                 "hierarchical": definition.hierarchical_partition_key,
                 "will_skip": definition.hierarchical_partition_key and not supports_hpk,
             }
@@ -27,12 +27,19 @@ def build_plan(supports_hpk: bool) -> list[dict]:
     return plan
 
 
+def build_partition_key(definition):
+    paths = definition.partition_key_paths
+    if len(paths) == 1:
+        return PartitionKey(path=paths[0])
+    return {"paths": paths, "kind": "MultiHash", "version": 2}
+
+
 def ensure_container(database, definition) -> dict:
     try:
         current = database.get_container_client(definition.name)
         properties = current.read()
         paths = properties.get("partitionKey", {}).get("paths", [])
-        expected = [definition.partition_key]
+        expected = definition.partition_key_paths
         if paths != expected:
             return {
                 "container": definition.name,
@@ -44,7 +51,7 @@ def ensure_container(database, definition) -> dict:
     except CosmosResourceNotFoundError:
         database.create_container_if_not_exists(
             id=definition.name,
-            partition_key=PartitionKey(path=definition.partition_key),
+            partition_key=build_partition_key(definition),
         )
         return {"container": definition.name, "status": "created"}
 
