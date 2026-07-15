@@ -8,30 +8,25 @@ from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from multitenancy_provisioning import (
     MULTITENANT_CONTAINERS,
-    azure_cosmos_supports_hierarchical_partition_keys,
 )
-from multitenancy_staging_config import load_staging_settings
+from multitenancy_staging_config import DEFAULT_STAGING_DATABASE, load_staging_settings
 
 
-def build_plan(supports_hpk: bool) -> list[dict]:
+def build_plan() -> list[dict]:
     plan = []
     for definition in MULTITENANT_CONTAINERS:
         plan.append(
             {
                 "container": definition.name,
-                "partition_key": definition.partition_key_paths,
-                "hierarchical": definition.hierarchical_partition_key,
-                "will_skip": definition.hierarchical_partition_key and not supports_hpk,
+                "partition_key": definition.partition_key,
+                "will_skip": False,
             }
         )
     return plan
 
 
 def build_partition_key(definition):
-    paths = definition.partition_key_paths
-    if len(paths) == 1:
-        return PartitionKey(path=paths[0])
-    return {"paths": paths, "kind": "MultiHash", "version": 2}
+    return PartitionKey(path=definition.partition_key)
 
 
 def ensure_container(database, definition) -> dict:
@@ -39,14 +34,11 @@ def ensure_container(database, definition) -> dict:
         current = database.get_container_client(definition.name)
         properties = current.read()
         paths = properties.get("partitionKey", {}).get("paths", [])
-        expected = definition.partition_key_paths
+        expected = [definition.partition_key]
         if paths != expected:
-            return {
-                "container": definition.name,
-                "status": "partition_key_mismatch",
-                "existing_partition_key": paths,
-                "expected_partition_key": expected,
-            }
+            raise RuntimeError(
+                f"Container {definition.name} has incompatible partition key {paths}; expected {expected}"
+            )
         return {"container": definition.name, "status": "exists"}
     except CosmosResourceNotFoundError:
         database.create_container_if_not_exists(
@@ -68,8 +60,10 @@ def main() -> int:
         args.dry_run = True
 
     settings = load_staging_settings()
-    supports_hpk = azure_cosmos_supports_hierarchical_partition_keys()
-    plan = build_plan(supports_hpk)
+    if settings.cosmos_database_name != DEFAULT_STAGING_DATABASE:
+        raise SystemExit(f"Refusing to use database {settings.cosmos_database_name}; expected {DEFAULT_STAGING_DATABASE}")
+
+    plan = build_plan()
     print(json.dumps({"mode": "apply" if args.apply else "dry-run", "database": settings.cosmos_database_name, "plan": plan}, indent=2))
 
     if args.dry_run:
@@ -79,9 +73,6 @@ def main() -> int:
     database = client.get_database_client(settings.cosmos_database_name)
     report = []
     for definition in MULTITENANT_CONTAINERS:
-        if definition.hierarchical_partition_key and not supports_hpk:
-            report.append({"container": definition.name, "status": "skipped_hierarchical_key_not_supported"})
-            continue
         report.append(ensure_container(database, definition))
     print(json.dumps({"report": report}, indent=2))
     return 0

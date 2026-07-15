@@ -1,9 +1,35 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Dict, Iterable, List, Optional
 
 from multitenancy_models import MultitenantUser, Tenant
+
+
+SYNTHETIC_KEY_SEPARATOR = "|"
+
+
+def _validate_synthetic_key_component(name: str, value: str) -> str:
+    normalized = (value or "").strip()
+    if not normalized:
+        raise ValueError(f"{name} is required")
+    if SYNTHETIC_KEY_SEPARATOR in normalized:
+        raise ValueError(f"{name} contains an invalid separator")
+    return normalized
+
+
+def build_tenant_student_key(tenant_id: str, student_id: str) -> str:
+    tenant = _validate_synthetic_key_component("tenant_id", tenant_id)
+    student = _validate_synthetic_key_component("student_id", student_id)
+    return f"{tenant}{SYNTHETIC_KEY_SEPARATOR}{student}"
+
+
+def build_tenant_month_key(tenant_id: str, utc_datetime: datetime) -> str:
+    tenant = _validate_synthetic_key_component("tenant_id", tenant_id)
+    if utc_datetime.tzinfo is None:
+        utc_datetime = utc_datetime.replace(tzinfo=timezone.utc)
+    return f"{tenant}{SYNTHETIC_KEY_SEPARATOR}{utc_datetime.astimezone(timezone.utc):%Y-%m}"
 
 
 class TenantRepository:
@@ -191,4 +217,149 @@ class CosmosTenantAwareStudentRepository(TenantAwareStudentRepository):
         if not current:
             return False
         self.students.container.delete_item(item=student_id, partition_key=tenant_id)
+        return True
+
+
+class TenantAwareClinicalRecordRepository:
+    def get_record(self, tenant_id: str, student_id: str, record_id: str) -> Optional[dict]:
+        raise NotImplementedError
+
+    def list_records(self, tenant_id: str, student_id: str) -> List[dict]:
+        raise NotImplementedError
+
+    def create_record(self, tenant_id: str, student_id: str, record: dict) -> dict:
+        raise NotImplementedError
+
+    def update_record(self, tenant_id: str, student_id: str, record_id: str, updates: dict) -> Optional[dict]:
+        raise NotImplementedError
+
+    def delete_record(self, tenant_id: str, student_id: str, record_id: str) -> bool:
+        raise NotImplementedError
+
+
+class InMemoryTenantAwareClinicalRecordRepository(TenantAwareClinicalRecordRepository):
+    def __init__(self, records: Optional[Iterable[dict]] = None):
+        self.records: List[dict] = []
+        for record in records or []:
+            stored = deepcopy(record)
+            stored["tenant_student_key"] = build_tenant_student_key(stored["tenant_id"], stored["student_id"])
+            self.records.append(stored)
+
+    def get_record(self, tenant_id: str, student_id: str, record_id: str) -> Optional[dict]:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        for record in self.records:
+            if (
+                record.get("tenant_id") == tenant_id
+                and record.get("student_id") == student_id
+                and record.get("tenant_student_key") == partition_key
+                and record.get("id") == record_id
+            ):
+                return deepcopy(record)
+        return None
+
+    def list_records(self, tenant_id: str, student_id: str) -> List[dict]:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        return [
+            deepcopy(record)
+            for record in self.records
+            if record.get("tenant_id") == tenant_id
+            and record.get("student_id") == student_id
+            and record.get("tenant_student_key") == partition_key
+        ]
+
+    def create_record(self, tenant_id: str, student_id: str, record: dict) -> dict:
+        stored = deepcopy(record)
+        stored["tenant_id"] = tenant_id
+        stored["student_id"] = student_id
+        stored["tenant_student_key"] = build_tenant_student_key(tenant_id, student_id)
+        self.records.append(stored)
+        return deepcopy(stored)
+
+    def update_record(self, tenant_id: str, student_id: str, record_id: str, updates: dict) -> Optional[dict]:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        for index, record in enumerate(self.records):
+            if (
+                record.get("tenant_id") == tenant_id
+                and record.get("student_id") == student_id
+                and record.get("tenant_student_key") == partition_key
+                and record.get("id") == record_id
+            ):
+                next_record = deepcopy(record)
+                blocked = {"tenant_id", "student_id", "tenant_student_key"}
+                next_record.update({key: value for key, value in updates.items() if key not in blocked})
+                next_record["tenant_id"] = tenant_id
+                next_record["student_id"] = student_id
+                next_record["tenant_student_key"] = partition_key
+                self.records[index] = next_record
+                return deepcopy(next_record)
+        return None
+
+    def delete_record(self, tenant_id: str, student_id: str, record_id: str) -> bool:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        for index, record in enumerate(self.records):
+            if (
+                record.get("tenant_id") == tenant_id
+                and record.get("student_id") == student_id
+                and record.get("tenant_student_key") == partition_key
+                and record.get("id") == record_id
+            ):
+                del self.records[index]
+                return True
+        return False
+
+
+class CosmosTenantAwareClinicalRecordRepository(TenantAwareClinicalRecordRepository):
+    def __init__(self, helper=None):
+        from cosmos_helper import CosmosDBHelper
+
+        self.records = helper or CosmosDBHelper("clinical_records_v2", "/tenant_student_key")
+
+    def get_record(self, tenant_id: str, student_id: str, record_id: str) -> Optional[dict]:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        try:
+            record = self.records.read_item(record_id, partition_key)
+        except Exception:
+            return None
+        if record.get("tenant_id") != tenant_id or record.get("student_id") != student_id:
+            return None
+        return record
+
+    def list_records(self, tenant_id: str, student_id: str) -> List[dict]:
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        query = (
+            "SELECT * FROM c WHERE c.tenant_id = @tenant_id "
+            "AND c.student_id = @student_id AND c.tenant_student_key = @tenant_student_key"
+        )
+        params = [
+            {"name": "@tenant_id", "value": tenant_id},
+            {"name": "@student_id", "value": student_id},
+            {"name": "@tenant_student_key", "value": partition_key},
+        ]
+        return self.records.query_items(query, params)
+
+    def create_record(self, tenant_id: str, student_id: str, record: dict) -> dict:
+        item = deepcopy(record)
+        item["tenant_id"] = tenant_id
+        item["student_id"] = student_id
+        item["tenant_student_key"] = build_tenant_student_key(tenant_id, student_id)
+        return self.records.create_item(item)
+
+    def update_record(self, tenant_id: str, student_id: str, record_id: str, updates: dict) -> Optional[dict]:
+        current = self.get_record(tenant_id, student_id, record_id)
+        if not current:
+            return None
+        blocked = {"tenant_id", "student_id", "tenant_student_key"}
+        current.update({key: value for key, value in updates.items() if key not in blocked})
+        current["tenant_id"] = tenant_id
+        current["student_id"] = student_id
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        current["tenant_student_key"] = partition_key
+        return self.records.upsert_item(current, partition_key)
+
+    def delete_record(self, tenant_id: str, student_id: str, record_id: str) -> bool:
+        current = self.get_record(tenant_id, student_id, record_id)
+        if not current:
+            return False
+        partition_key = build_tenant_student_key(tenant_id, student_id)
+        self.records.container.delete_item(item=record_id, partition_key=partition_key)
         return True
