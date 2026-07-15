@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from auth_service import AuthService
 from multitenancy_models import MultitenantUser, Tenant, TenantStatus
 from multitenancy_repositories import (
     InMemoryTenantAwareStudentRepository,
@@ -45,8 +44,9 @@ def build_staging_tenants() -> InMemoryTenantRepository:
     )
 
 
-def build_staging_users() -> InMemoryUserRepository:
-    password_hash = AuthService.hash_password("TemporalDemo123!")
+def build_staging_users(password_hash: str | None = None) -> InMemoryUserRepository:
+    if password_hash is None:
+        password_hash = "SET_WITH_PROVISIONING_CLI"
     return InMemoryUserRepository(
         [
             MultitenantUser(

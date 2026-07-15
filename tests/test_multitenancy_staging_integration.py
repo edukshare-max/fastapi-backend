@@ -3,7 +3,7 @@ import unittest
 from fastapi import HTTPException
 from jose import jwt
 
-from auth_service import ALGORITHM, SECRET_KEY
+from auth_service import ALGORITHM, AuthService, SECRET_KEY
 from multitenancy_auth import InstitutionalAuthService, GENERIC_LOGIN_ERROR
 from multitenancy_files import build_tenant_file_path, assert_file_belongs_to_tenant
 from multitenancy_models import (
@@ -118,7 +118,7 @@ class StagingClient:
 class MultitenantStagingIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.tenants = build_staging_tenants()
-        self.users = build_staging_users()
+        self.users = build_staging_users(AuthService.hash_password("TemporalDemo123!"))
         self.students = build_staging_students()
         self.audit = __import__("multitenancy_audit").InMemoryAuditLogger()
         self.service = InstitutionalAuthService(self.tenants, self.users, self.audit)
