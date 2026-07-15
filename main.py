@@ -39,12 +39,15 @@ from referral_routes import router as referrals_router
 from ticket_routes import router as tickets_router
 from multitenancy_audit import InMemoryAuditLogger
 from multitenancy_auth import InstitutionalAuthService
+from multitenancy_provisioning import MULTITENANT_CONTAINERS
 from multitenancy_repositories import (
     CosmosTenantAwareStudentRepository,
     InMemoryTenantRepository,
     InMemoryUserRepository,
 )
-from multitenancy_routes import create_multitenancy_router
+from multitenancy_routes import create_multitenancy_health_router, create_multitenancy_router
+from multitenancy_seed import build_staging_students, build_staging_tenants, build_staging_users
+from multitenancy_staging_config import load_staging_settings
 
 # Importar modelos y servicios de autenticación
 from auth_models import (
@@ -66,14 +69,34 @@ sys.stderr.write("FASTAPI APP CREATED SUCCESSFULLY\n")
 sys.stderr.write("=" * 80 + "\n")
 sys.stderr.flush()
 
+_multitenant_routes_enabled = os.environ.get("ENABLE_MULTITENANT_ROUTES", "false").lower() == "true"
+_allowed_origins = ["*"]
+if _multitenant_routes_enabled:
+    _allowed_origins = [
+        origin.strip()
+        for origin in os.environ.get("ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
+
 # CORS para permitir requests del frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request, call_next):
+    response = await call_next(request)
+    if _multitenant_routes_enabled:
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("Cache-Control", "no-store")
+    return response
 
 # Montar router de actualizaciones
 app.include_router(updates_router)
@@ -81,17 +104,23 @@ app.include_router(appointments_router)
 app.include_router(referrals_router)
 app.include_router(tickets_router)
 
-if os.environ.get("ENABLE_MULTITENANT_ROUTES", "false").lower() == "true":
+if _multitenant_routes_enabled:
+    app.state.multitenant_staging_settings = load_staging_settings()
+    use_seed_data = os.environ.get("MULTITENANT_USE_STAGING_SEED", "false").lower() == "true"
+    tenants = build_staging_tenants() if use_seed_data else InMemoryTenantRepository([])
+    users = build_staging_users() if use_seed_data else InMemoryUserRepository([])
+    students = build_staging_students() if use_seed_data else CosmosTenantAwareStudentRepository()
     app.state.multitenant_auth_service = InstitutionalAuthService(
-        tenants=InMemoryTenantRepository([]),
-        users=InMemoryUserRepository([]),
+        tenants=tenants,
+        users=users,
         audit_logger=InMemoryAuditLogger(),
     )
     app.include_router(
-        create_multitenancy_router(CosmosTenantAwareStudentRepository()),
+        create_multitenancy_router(students),
         prefix="/v2",
         tags=["multitenancy"],
     )
+    app.include_router(create_multitenancy_health_router([item.name for item in MULTITENANT_CONTAINERS]))
 
 carnets = CosmosDBHelper(
     os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
