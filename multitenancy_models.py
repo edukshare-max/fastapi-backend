@@ -68,15 +68,43 @@ class MultitenantUser(BaseModel):
     roles: List[str] = Field(default_factory=list)
     permissions: List[str] = Field(default_factory=list)
     session_version: int = 1
+    failed_login_attempts: int = 0
+    locked_until: Optional[datetime] = None
+    temporary_password: bool = False
+    password_changed_at: Optional[datetime] = None
 
 
 class TokenResponse(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     tenant_id: str
     user_id: str
     roles: List[str]
     permissions: List[str]
+    requires_password_change: bool = False
+
+
+class InstitutionResolveRequest(BaseModel):
+    institution_code: str
+
+
+class InstitutionResolveResponse(BaseModel):
+    institution_id: str
+    display_name: str
+    status: str
+    branding: Dict[str, Any]
+    enabled_modules: List[str]
+    demo: bool = False
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
+class ChangeTemporaryPasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=12)
 
 
 class AuditEvent(BaseModel):

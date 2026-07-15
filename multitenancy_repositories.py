@@ -21,6 +21,9 @@ class UserRepository:
     def get_by_username(self, tenant_id: str, username: str) -> Optional[MultitenantUser]:
         raise NotImplementedError
 
+    def save(self, user: MultitenantUser) -> MultitenantUser:
+        raise NotImplementedError
+
 
 class InMemoryTenantRepository(TenantRepository):
     def __init__(self, tenants: Iterable[Tenant]):
@@ -32,6 +35,11 @@ class InMemoryTenantRepository(TenantRepository):
 
     def get_by_code(self, code: str) -> Optional[Tenant]:
         return self.by_code.get(code.strip().upper())
+
+    def save(self, tenant: Tenant) -> Tenant:
+        self.by_id[tenant.id] = tenant
+        self.by_code[tenant.code.upper()] = tenant
+        return tenant
 
 
 class InMemoryUserRepository(UserRepository):
@@ -51,6 +59,14 @@ class InMemoryUserRepository(UserRepository):
             ),
             None,
         )
+
+    def save(self, user: MultitenantUser) -> MultitenantUser:
+        for index, current in enumerate(self.users):
+            if current.tenant_id == user.tenant_id and current.id == user.id:
+                self.users[index] = user
+                return user
+        self.users.append(user)
+        return user
 
 
 class TenantAwareStudentRepository:
