@@ -105,15 +105,28 @@ class MultitenancyFoundationTest(unittest.TestCase):
         self.audit = InMemoryAuditLogger()
         self.tenants = InMemoryTenantRepository(
             [
-                Tenant(id="cres", code="CRES-INTERNAL", name="CRES", status=TenantStatus.ACTIVE),
+                Tenant(
+                    id="cres",
+                    code="CRES-INTERNAL",
+                    name="CRES",
+                    status=TenantStatus.ACTIVE,
+                    enabled_modules=["students"],
+                ),
                 Tenant(
                     id="loyola",
                     code="LOYOLA-DEMO-2026",
                     name="LOYOLA",
                     status=TenantStatus.TRIAL,
                     plan="demo",
+                    enabled_modules=["students"],
                 ),
-                Tenant(id="blocked", code="BLOCKED-2026", name="Blocked", status=TenantStatus.SUSPENDED),
+                Tenant(
+                    id="blocked",
+                    code="BLOCKED-2026",
+                    name="Blocked",
+                    status=TenantStatus.SUSPENDED,
+                    enabled_modules=["students"],
+                ),
             ]
         )
         password_hash = hash_password("Correcta123")

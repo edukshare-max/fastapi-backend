@@ -20,7 +20,7 @@ from multitenancy_models import (
     RefreshTokenRequest,
     TenantContext,
     TokenResponse,
-    permissions_for_roles,
+    effective_permissions_for_tenant,
 )
 from multitenancy_repositories import TenantRepository, UserRepository
 
@@ -110,7 +110,7 @@ class InstitutionalAuthService:
             raise self._invalid_credentials()
 
         session_id = str(uuid.uuid4())
-        permissions = permissions_for_roles(user.roles, user.permissions)
+        permissions = effective_permissions_for_tenant(user.roles, user.permissions, tenant.enabled_modules)
         user.failed_login_attempts = 0
         user.locked_until = None
         self.users.save(user)
@@ -118,6 +118,7 @@ class InstitutionalAuthService:
             user=user,
             roles=user.roles,
             permissions=permissions,
+            modules=tenant.enabled_modules,
             session_id=session_id,
         )
         refresh_token = self.create_refresh_token(user=user, session_id=session_id)
@@ -136,8 +137,10 @@ class InstitutionalAuthService:
             refresh_token=refresh_token,
             tenant_id=tenant.id,
             user_id=user.id,
+            username=user.username,
             roles=user.roles,
             permissions=permissions,
+            modules=tenant.enabled_modules,
             requires_password_change=user.temporary_password,
         )
 
@@ -147,6 +150,7 @@ class InstitutionalAuthService:
         user: MultitenantUser,
         roles: list[str],
         permissions: list[str],
+        modules: Optional[list[str]] = None,
         session_id: Optional[str] = None,
         expires_delta: Optional[timedelta] = None,
     ) -> str:
@@ -156,8 +160,10 @@ class InstitutionalAuthService:
         payload = {
             "sub": user.id,
             "tenant_id": user.tenant_id,
+            "username": user.username,
             "roles": roles,
             "permissions": permissions,
+            "modules": modules or [],
             "session_id": session_id or str(uuid.uuid4()),
             "session_version": user.session_version,
             "exp": expire,
@@ -192,11 +198,12 @@ class InstitutionalAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesion no autorizada")
 
         record["used"] = True
-        permissions = permissions_for_roles(user.roles, user.permissions)
+        permissions = effective_permissions_for_tenant(user.roles, user.permissions, tenant.enabled_modules)
         access_token = self.create_token(
             user=user,
             roles=user.roles,
             permissions=permissions,
+            modules=tenant.enabled_modules,
             session_id=record["session_id"],
         )
         refresh_token = self.create_refresh_token(user=user, session_id=record["session_id"])
@@ -205,8 +212,10 @@ class InstitutionalAuthService:
             refresh_token=refresh_token,
             tenant_id=user.tenant_id,
             user_id=user.id,
+            username=user.username,
             roles=user.roles,
             permissions=permissions,
+            modules=tenant.enabled_modules,
             requires_password_change=user.temporary_password,
         )
 
@@ -251,7 +260,6 @@ class InstitutionalAuthService:
         user_id = payload.get("sub")
         tenant_id = payload.get("tenant_id")
         roles = payload.get("roles") or []
-        permissions = payload.get("permissions") or []
         session_id = payload.get("session_id")
         if not user_id or not tenant_id or not session_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido")
@@ -272,12 +280,15 @@ class InstitutionalAuthService:
         token_session_version = payload.get("session_version", user.session_version)
         if token_session_version != user.session_version:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sesion revocada")
+        permissions = effective_permissions_for_tenant(user.roles, user.permissions, tenant.enabled_modules)
 
         return TenantContext(
             tenant_id=tenant_id,
             user_id=user_id,
-            roles=list(roles),
-            permissions=list(permissions),
+            username=user.username,
+            roles=list(user.roles or roles),
+            permissions=permissions,
+            modules=list(tenant.enabled_modules),
             session_id=session_id,
             correlation_id=correlation_id,
         )

@@ -148,6 +148,55 @@ class MultitenantStagingIntegrationTest(unittest.TestCase):
         body = self.login_loyola()
         payload = jwt.decode(body["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
         self.assertEqual(payload["tenant_id"], "loyola-demo")
+        self.assertEqual(body["tenant_id"], "loyola-demo")
+        self.assertEqual(body["user_id"], "loyola-admin-demo")
+        self.assertEqual(body["username"], "admin.loyola")
+        self.assertEqual(body["roles"], ["tenant_admin"])
+        self.assertEqual(body["modules"], ["students", "appointments", "audit"])
+
+    def test_tenant_admin_gets_effective_permissions_for_enabled_modules(self):
+        body = self.login_loyola()
+
+        self.assertEqual(
+            set(body["permissions"]),
+            {
+                "students.read",
+                "students.write",
+                "appointments.read",
+                "appointments.write",
+                "audit.read",
+            },
+        )
+
+    def test_tenant_admin_permissions_are_limited_to_enabled_modules(self):
+        tenant = self.tenants.get_by_id("loyola-demo")
+        tenant.enabled_modules = ["students"]
+        self.tenants.save(tenant)
+
+        body = self.login_loyola()
+
+        self.assertEqual(body["modules"], ["students"])
+        self.assertEqual(set(body["permissions"]), {"students.read", "students.write"})
+        self.assertNotIn("appointments.read", body["permissions"])
+        self.assertNotIn("audit.read", body["permissions"])
+
+    def test_tenant_admin_does_not_receive_global_permissions(self):
+        body = self.login_loyola()
+
+        self.assertNotIn("tenants.manage", body["permissions"])
+        self.assertNotIn("users.manage", body["permissions"])
+        self.assertNotIn("medical_records.write", body["permissions"])
+
+    def test_context_recomputes_permissions_for_current_tenant_modules(self):
+        token = self.login_loyola()["access_token"]
+        tenant = self.tenants.get_by_id("loyola-demo")
+        tenant.enabled_modules = ["students"]
+        self.tenants.save(tenant)
+
+        context = self.client.context(token)
+
+        self.assertEqual(context.modules, ["students"])
+        self.assertEqual(set(context.permissions), {"students.read", "students.write"})
 
     def test_cres_staging_login_uses_own_user(self):
         body = self.login_cres()

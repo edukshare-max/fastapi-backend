@@ -44,8 +44,10 @@ class Tenant(BaseModel):
 class TenantContext(BaseModel):
     tenant_id: str
     user_id: str
+    username: Optional[str] = None
     roles: List[str]
     permissions: List[str]
+    modules: List[str] = Field(default_factory=list)
     session_id: str
     correlation_id: Optional[str] = None
 
@@ -80,8 +82,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     tenant_id: str
     user_id: str
+    username: Optional[str] = None
     roles: List[str]
     permissions: List[str]
+    modules: List[str] = Field(default_factory=list)
     requires_password_change: bool = False
 
 
@@ -184,6 +188,12 @@ ROLE_PERMISSIONS = {
     "auditor": ["students.read", "audit.read"],
 }
 
+MODULE_PERMISSIONS = {
+    "students": {"students.read", "students.write"},
+    "appointments": {"appointments.read", "appointments.write"},
+    "audit": {"audit.read"},
+}
+
 
 SENSITIVE_AUDIT_KEYS = {
     "password",
@@ -203,6 +213,18 @@ def permissions_for_roles(roles: List[str], explicit_permissions: Optional[List[
     for role in roles:
         permissions.update(ROLE_PERMISSIONS.get(role, []))
     return sorted(permissions)
+
+
+def effective_permissions_for_tenant(
+    roles: List[str],
+    explicit_permissions: Optional[List[str]],
+    enabled_modules: List[str],
+) -> List[str]:
+    module_permissions = set()
+    for module in enabled_modules:
+        module_permissions.update(MODULE_PERMISSIONS.get(module, set()))
+    role_permissions = set(permissions_for_roles(roles, explicit_permissions))
+    return sorted(role_permissions & module_permissions)
 
 
 def sanitize_audit_details(details: Optional[Dict[str, Any]]) -> Dict[str, Any]:
