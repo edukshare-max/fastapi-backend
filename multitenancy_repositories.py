@@ -39,6 +39,15 @@ class TenantRepository:
     def get_by_code(self, code: str) -> Optional[Tenant]:
         raise NotImplementedError
 
+    def save(self, tenant: Tenant) -> Tenant:
+        raise NotImplementedError
+
+    def create(self, tenant: Tenant) -> Tenant:
+        raise NotImplementedError
+
+    def update(self, tenant: Tenant) -> Tenant:
+        raise NotImplementedError
+
 
 class UserRepository:
     def get_by_id(self, tenant_id: str, user_id: str) -> Optional[MultitenantUser]:
@@ -48,6 +57,12 @@ class UserRepository:
         raise NotImplementedError
 
     def save(self, user: MultitenantUser) -> MultitenantUser:
+        raise NotImplementedError
+
+    def create(self, user: MultitenantUser) -> MultitenantUser:
+        raise NotImplementedError
+
+    def update(self, user: MultitenantUser) -> MultitenantUser:
         raise NotImplementedError
 
 
@@ -66,6 +81,12 @@ class InMemoryTenantRepository(TenantRepository):
         self.by_id[tenant.id] = tenant
         self.by_code[tenant.code.upper()] = tenant
         return tenant
+
+    def create(self, tenant: Tenant) -> Tenant:
+        return self.save(tenant)
+
+    def update(self, tenant: Tenant) -> Tenant:
+        return self.save(tenant)
 
 
 class InMemoryUserRepository(UserRepository):
@@ -93,6 +114,112 @@ class InMemoryUserRepository(UserRepository):
                 return user
         self.users.append(user)
         return user
+
+    def create(self, user: MultitenantUser) -> MultitenantUser:
+        return self.save(user)
+
+    def update(self, user: MultitenantUser) -> MultitenantUser:
+        return self.save(user)
+
+
+def _strip_cosmos_metadata(item: dict) -> dict:
+    return {key: value for key, value in item.items() if not key.startswith("_")}
+
+
+class CosmosTenantRepository(TenantRepository):
+    def __init__(self, helper=None):
+        self._tenants = helper
+
+    @property
+    def tenants(self):
+        if self._tenants is None:
+            from cosmos_helper import CosmosDBHelper
+
+            self._tenants = CosmosDBHelper("tenants_v2", "/id")
+        return self._tenants
+
+    def get_by_id(self, tenant_id: str) -> Optional[Tenant]:
+        try:
+            item = self.tenants.read_item(tenant_id, tenant_id)
+        except Exception:
+            return None
+        return Tenant(**_strip_cosmos_metadata(item))
+
+    def get_by_code(self, code: str) -> Optional[Tenant]:
+        normalized = code.strip().upper()
+        query = "SELECT * FROM c WHERE c.code = @code OR c.code_upper = @code"
+        params = [{"name": "@code", "value": normalized}]
+        results = self.tenants.query_items(query, params)
+        return Tenant(**_strip_cosmos_metadata(results[0])) if results else None
+
+    def save(self, tenant: Tenant) -> Tenant:
+        return self.update(tenant)
+
+    def create(self, tenant: Tenant) -> Tenant:
+        item = self._to_item(tenant)
+        return Tenant(**_strip_cosmos_metadata(self.tenants.create_item(item)))
+
+    def update(self, tenant: Tenant) -> Tenant:
+        item = self._to_item(tenant)
+        return Tenant(**_strip_cosmos_metadata(self.tenants.upsert_item(item, tenant.id)))
+
+    @staticmethod
+    def _to_item(tenant: Tenant) -> dict:
+        item = tenant.model_dump(mode="json")
+        item["code"] = tenant.code.strip().upper()
+        item["code_upper"] = tenant.code.strip().upper()
+        return item
+
+
+class CosmosUserRepository(UserRepository):
+    def __init__(self, helper=None):
+        self._users = helper
+
+    @property
+    def users(self):
+        if self._users is None:
+            from cosmos_helper import CosmosDBHelper
+
+            self._users = CosmosDBHelper("users_v2", "/tenant_id")
+        return self._users
+
+    def get_by_id(self, tenant_id: str, user_id: str) -> Optional[MultitenantUser]:
+        try:
+            item = self.users.read_item(user_id, tenant_id)
+        except Exception:
+            return None
+        if item.get("tenant_id") != tenant_id:
+            return None
+        return MultitenantUser(**_strip_cosmos_metadata(item))
+
+    def get_by_username(self, tenant_id: str, username: str) -> Optional[MultitenantUser]:
+        normalized = username.strip().lower()
+        query = (
+            "SELECT * FROM c WHERE c.tenant_id = @tenant_id "
+            "AND (c.username = @username OR c.username_normalized = @username)"
+        )
+        params = [{"name": "@tenant_id", "value": tenant_id}, {"name": "@username", "value": normalized}]
+        results = self.users.query_items(query, params)
+        return MultitenantUser(**_strip_cosmos_metadata(results[0])) if results else None
+
+    def save(self, user: MultitenantUser) -> MultitenantUser:
+        return self.update(user)
+
+    def create(self, user: MultitenantUser) -> MultitenantUser:
+        item = self._to_item(user)
+        return MultitenantUser(**_strip_cosmos_metadata(self.users.create_item(item)))
+
+    def update(self, user: MultitenantUser) -> MultitenantUser:
+        item = self._to_item(user)
+        return MultitenantUser(**_strip_cosmos_metadata(self.users.upsert_item(item, user.tenant_id)))
+
+    @staticmethod
+    def _to_item(user: MultitenantUser) -> dict:
+        item = user.model_dump(mode="json")
+        item["username"] = user.username.strip().lower()
+        item["username_normalized"] = user.username.strip().lower()
+        item["must_change_password"] = bool(user.temporary_password)
+        return item
 
 
 class TenantAwareStudentRepository:

@@ -4,8 +4,23 @@ import argparse
 import json
 import secrets
 import string
+import sys
 from dataclasses import dataclass
-from typing import List
+from datetime import datetime, timezone
+from typing import Iterable, List, Optional, TextIO
+
+from multitenancy_auth import hash_password, validate_password_strength
+from multitenancy_models import MultitenantUser, Tenant, TenantStatus
+from multitenancy_repositories import (
+    CosmosTenantAwareStudentRepository,
+    CosmosTenantRepository,
+    CosmosUserRepository,
+    TenantAwareStudentRepository,
+    TenantRepository,
+    UserRepository,
+)
+from multitenancy_staging_config import DEFAULT_STAGING_DATABASE, StagingConfigurationError, load_staging_settings
+
 
 @dataclass(frozen=True)
 class ContainerDefinition:
@@ -25,130 +40,206 @@ MULTITENANT_CONTAINERS: List[ContainerDefinition] = [
 ]
 
 
-STAGING_TENANTS = [
-    {
-        "id": "cres",
-        "code": "CRES-INTERNAL",
-        "name": "CRES",
-        "status": "active",
-        "plan": "internal",
-    },
-    {
-        "id": "loyola",
-        "code": "LOYOLA-DEMO-2026",
-        "name": "LOYOLA",
-        "status": "trial",
-        "plan": "demo",
-    },
-]
+LOYOLA_TENANT_ID = "loyola-demo"
+LOYOLA_TENANT_CODE = "LOYOLA-DEMO-2026"
+LOYOLA_ADMIN_USERNAME = "admin.loyola"
+LOYOLA_ADMIN_USER_ID = "loyola-demo-admin-loyola"
+
+
+def build_loyola_tenant(now: Optional[datetime] = None) -> Tenant:
+    timestamp = now or datetime.now(timezone.utc)
+    return Tenant(
+        id=LOYOLA_TENANT_ID,
+        code=LOYOLA_TENANT_CODE,
+        name="LOYOLA",
+        status=TenantStatus.TRIAL,
+        plan="demo",
+        enabled_modules=["students", "appointments", "audit"],
+        branding={
+            "primary_color": "#164E8A",
+            "secondary_color": "#D8A21B",
+            "logo_url": "embedded://loyola-demo",
+            "subtitle": "Demo institucional",
+            "demo": True,
+        },
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
+
+
+def build_loyola_students() -> list[dict]:
+    return [
+        {
+            "id": "loyola-demo-student-ficticio-001",
+            "tenant_id": LOYOLA_TENANT_ID,
+            "matricula": "LOY-FICT-001",
+            "nombre": "Alumno Ficticio Loyola Uno",
+            "clinical_summary": "Registro simulado para demo LOYOLA",
+            "demo": True,
+        },
+        {
+            "id": "loyola-demo-student-ficticio-002",
+            "tenant_id": LOYOLA_TENANT_ID,
+            "matricula": "LOY-FICT-002",
+            "nombre": "Alumno Ficticio Loyola Dos",
+            "clinical_summary": "Registro simulado sin datos reales",
+            "demo": True,
+        },
+    ]
 
 
 def generate_temporary_password(length: int = 18) -> str:
-    from auth_service import AuthService
-
     alphabet = string.ascii_letters + string.digits + "!@#$%*-_"
     while True:
         password = "".join(secrets.choice(alphabet) for _ in range(length))
-        ok, _ = AuthService.validate_password_strength(password)
+        ok, _ = validate_password_strength(password)
         if ok and len(password) >= 12:
             return password
 
 
-def _print_plan(action: str, payload: dict, apply: bool) -> None:
-    safe_payload = dict(payload)
-    safe_payload.pop("temporary_password", None)
-    safe_payload.pop("temporary_password_hash", None)
-    print(json.dumps({"mode": "apply" if apply else "dry-run", "action": action, "payload": safe_payload}, indent=2))
+def validate_apply_environment(env: Optional[dict] = None) -> None:
+    settings = load_staging_settings(env)
+    if settings.cosmos_database_name != DEFAULT_STAGING_DATABASE:
+        raise StagingConfigurationError("COSMOS_DATABASE_NAME must be sasu_multitenant_staging")
+    if settings.allow_production_database:
+        raise StagingConfigurationError("ALLOW_PRODUCTION_DATABASE must be false")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="SASU multitenant staging provisioning CLI")
-    parser.add_argument("--apply", action="store_true", help="Apply the requested staging change")
-    sub = parser.add_subparsers(dest="resource", required=True)
+def _safe_plan_payload() -> dict:
+    return {
+        "tenant": {
+            "id": LOYOLA_TENANT_ID,
+            "code": LOYOLA_TENANT_CODE,
+            "name": "LOYOLA",
+            "status": "trial",
+            "plan": "demo",
+            "enabled_modules": ["students", "appointments", "audit"],
+            "branding": "demo institucional",
+        },
+        "user": {
+            "id": LOYOLA_ADMIN_USER_ID,
+            "tenant_id": LOYOLA_TENANT_ID,
+            "username": LOYOLA_ADMIN_USERNAME,
+            "roles": ["tenant_admin"],
+            "active": True,
+            "temporary_password": True,
+            "must_change_password": True,
+            "password": "generated-on-apply",
+        },
+        "students": [student["id"] for student in build_loyola_students()],
+        "database": DEFAULT_STAGING_DATABASE,
+    }
 
-    tenant = sub.add_parser("tenant")
-    tenant_sub = tenant.add_subparsers(dest="action", required=True)
-    tenant_create = tenant_sub.add_parser("create")
-    tenant_create.add_argument("--id", required=True)
-    tenant_create.add_argument("--code", required=True)
-    tenant_create.add_argument("--name", required=True)
-    tenant_create.add_argument("--plan", default="demo")
-    tenant_create.add_argument("--status", default="trial")
-    tenant_sub.add_parser("list")
-    tenant_suspend = tenant_sub.add_parser("suspend")
-    tenant_suspend.add_argument("--id", required=True)
-    tenant_activate = tenant_sub.add_parser("activate")
-    tenant_activate.add_argument("--id", required=True)
-    tenant_branding = tenant_sub.add_parser("branding")
-    tenant_branding.add_argument("--id", required=True)
-    tenant_branding.add_argument("--primary-color", required=True)
-    tenant_branding.add_argument("--secondary-color", required=True)
-    tenant_modules = tenant_sub.add_parser("modules")
-    tenant_modules.add_argument("--id", required=True)
-    tenant_modules.add_argument("--enable", nargs="+", default=[])
 
-    user = sub.add_parser("user")
-    user_sub = user.add_subparsers(dest="action", required=True)
-    create_admin = user_sub.add_parser("create-admin")
-    create_admin.add_argument("--tenant-id", required=True)
-    create_admin.add_argument("--username", required=True)
-    reset_password = user_sub.add_parser("reset-password")
-    reset_password.add_argument("--tenant-id", required=True)
-    reset_password.add_argument("--username", required=True)
+def _write_json(output: TextIO, payload: dict) -> None:
+    print(json.dumps(payload, indent=2, sort_keys=True), file=output)
 
-    session = sub.add_parser("session")
-    session_sub = session.add_subparsers(dest="action", required=True)
-    revoke = session_sub.add_parser("revoke")
-    revoke.add_argument("--session-id", required=True)
 
-    args = parser.parse_args()
-    apply = bool(args.apply)
+def _upsert_tenant(repo: TenantRepository, tenant: Tenant) -> str:
+    existing = repo.get_by_id(tenant.id)
+    if existing:
+        tenant.created_at = existing.created_at
+        tenant.updated_at = datetime.now(timezone.utc)
+        repo.update(tenant)
+        return "updated"
+    repo.create(tenant)
+    return "created"
 
-    if args.resource == "tenant" and args.action == "create":
-        _print_plan(
-            "tenant.create",
-            {"id": args.id, "code": args.code, "name": args.name, "status": args.status, "plan": args.plan},
-            apply,
-        )
-    elif args.resource == "tenant" and args.action == "list":
-        _print_plan("tenant.list", {"fields": ["id", "code", "name", "status", "plan"]}, apply)
-    elif args.resource == "tenant" and args.action in {"suspend", "activate"}:
-        _print_plan(f"tenant.{args.action}", {"id": args.id}, apply)
-    elif args.resource == "tenant" and args.action == "branding":
-        _print_plan(
-            "tenant.branding",
-            {"id": args.id, "primary_color": args.primary_color, "secondary_color": args.secondary_color},
-            apply,
-        )
-    elif args.resource == "tenant" and args.action == "modules":
-        _print_plan("tenant.modules", {"id": args.id, "enabled_modules": args.enable}, apply)
-    elif args.resource == "user" and args.action in {"create-admin", "reset-password"}:
-        from auth_service import AuthService
 
-        temporary_password = generate_temporary_password()
-        _print_plan(
-            f"user.{args.action}",
-            {
-                "tenant_id": args.tenant_id,
-                "username": args.username,
+def _upsert_user(repo: UserRepository, password: str) -> tuple[str, bool]:
+    existing = repo.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID)
+    if existing:
+        user = existing.model_copy(
+            update={
+                "tenant_id": LOYOLA_TENANT_ID,
+                "username": LOYOLA_ADMIN_USERNAME,
                 "roles": ["tenant_admin"],
-                "temporary_password_hash": AuthService.hash_password(temporary_password),
-                "password_hash_generated": True,
-                "temporary_password": temporary_password,
-                "must_change_password": True,
-            },
-            apply,
+                "active": True,
+            }
         )
-        print("TEMPORARY_PASSWORD_ONE_TIME=" + temporary_password)
-    elif args.resource == "session" and args.action == "revoke":
-        _print_plan("session.revoke", {"session_id": args.session_id}, apply)
-    else:
-        raise SystemExit("Unsupported command")
+        repo.update(user)
+        return "updated", False
 
+    user = MultitenantUser(
+        id=LOYOLA_ADMIN_USER_ID,
+        tenant_id=LOYOLA_TENANT_ID,
+        username=LOYOLA_ADMIN_USERNAME,
+        password_hash=hash_password(password),
+        roles=["tenant_admin"],
+        active=True,
+        temporary_password=True,
+    )
+    repo.create(user)
+    return "created", True
+
+
+def _upsert_students(repo: TenantAwareStudentRepository, students: Iterable[dict]) -> list[dict]:
+    results = []
+    for student in students:
+        existing = repo.get_student(LOYOLA_TENANT_ID, student["id"])
+        if existing:
+            repo.update_student(LOYOLA_TENANT_ID, student["id"], student)
+            results.append({"id": student["id"], "status": "updated"})
+        else:
+            repo.create_student(LOYOLA_TENANT_ID, student)
+            results.append({"id": student["id"], "status": "created"})
+    return results
+
+
+def provision_loyola_demo(
+    *,
+    apply: bool = False,
+    tenant_repo: Optional[TenantRepository] = None,
+    user_repo: Optional[UserRepository] = None,
+    students_repo: Optional[TenantAwareStudentRepository] = None,
+    env: Optional[dict] = None,
+    output: TextIO = sys.stdout,
+) -> dict:
     if not apply:
-        print("Dry-run only. Re-run with --apply in staging after reviewing the plan.")
-    else:
-        print("Apply mode selected. Wire this command to Cosmos staging before production use.")
+        payload = {"mode": "dry-run", "action": "loyola-demo", "payload": _safe_plan_payload()}
+        _write_json(output, payload)
+        print("Dry-run only. Re-run with --apply in staging after reviewing the plan.", file=output)
+        return payload
+
+    validate_apply_environment(env)
+    tenant_repo = tenant_repo or CosmosTenantRepository()
+    user_repo = user_repo or CosmosUserRepository()
+    students_repo = students_repo or CosmosTenantAwareStudentRepository()
+
+    temporary_password = generate_temporary_password()
+    tenant_status = _upsert_tenant(tenant_repo, build_loyola_tenant())
+    user_status, password_created = _upsert_user(user_repo, temporary_password)
+    student_results = _upsert_students(students_repo, build_loyola_students())
+
+    payload = {
+        "mode": "apply",
+        "action": "loyola-demo",
+        "database": DEFAULT_STAGING_DATABASE,
+        "tenant": {"id": LOYOLA_TENANT_ID, "status": tenant_status},
+        "user": {
+            "id": LOYOLA_ADMIN_USER_ID,
+            "tenant_id": LOYOLA_TENANT_ID,
+            "username": LOYOLA_ADMIN_USERNAME,
+            "status": user_status,
+            "temporary_password_created": password_created,
+        },
+        "students": student_results,
+    }
+    _write_json(output, payload)
+    if password_created:
+        print(f"TEMPORARY_PASSWORD_ONE_TIME={temporary_password}", file=output)
+    return payload
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="SASU multitenant staging provisioning CLI")
+    parser.add_argument("scenario", choices=["loyola-demo"], help="Provisioning scenario to plan or apply")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--dry-run", action="store_true", help="Print the provisioning plan without writing")
+    mode.add_argument("--apply", action="store_true", help="Apply the provisioning plan to Cosmos staging")
+    args = parser.parse_args(argv)
+
+    provision_loyola_demo(apply=bool(args.apply))
     return 0
 
 

@@ -6,9 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from multitenancy_audit import InMemoryAuditLogger
 from multitenancy_auth import InstitutionalAuthService
 from multitenancy_provisioning import MULTITENANT_CONTAINERS
-from multitenancy_repositories import CosmosTenantAwareStudentRepository
+from multitenancy_repositories import CosmosTenantAwareStudentRepository, CosmosTenantRepository, CosmosUserRepository
 from multitenancy_routes import create_multitenancy_health_router, create_multitenancy_router
-from multitenancy_seed import build_staging_tenants, build_staging_users
 from multitenancy_staging_config import DEFAULT_STAGING_DATABASE, StagingConfigurationError, load_staging_settings
 
 
@@ -54,8 +53,8 @@ app = FastAPI(
 )
 app.state.multitenant_staging_settings = settings
 app.state.multitenant_auth_service = InstitutionalAuthService(
-    build_staging_tenants(),
-    build_staging_users(),
+    CosmosTenantRepository(),
+    CosmosUserRepository(),
     InMemoryAuditLogger(),
 )
 

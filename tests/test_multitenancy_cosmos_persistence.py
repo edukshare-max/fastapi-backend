@@ -1,0 +1,308 @@
+import io
+import unittest
+
+from multitenancy_auth import InstitutionalAuthService, verify_password
+from multitenancy_audit import InMemoryAuditLogger
+from multitenancy_models import InstitutionalLoginRequest, MultitenantUser, Tenant, TenantStatus
+from multitenancy_provisioning import (
+    LOYOLA_ADMIN_USER_ID,
+    LOYOLA_ADMIN_USERNAME,
+    LOYOLA_TENANT_CODE,
+    LOYOLA_TENANT_ID,
+    provision_loyola_demo,
+)
+from multitenancy_repositories import (
+    CosmosTenantRepository,
+    CosmosUserRepository,
+    InMemoryTenantAwareStudentRepository,
+    InMemoryTenantRepository,
+    InMemoryUserRepository,
+)
+from multitenancy_staging_config import StagingConfigurationError
+
+
+STAGING_ENV = {
+    "APP_ENV": "staging",
+    "ENABLE_MULTITENANT_ROUTES": "true",
+    "ENABLE_LEGACY_ROUTES": "false",
+    "COSMOS_ENDPOINT": "https://placeholder.documents.azure.com:443/",
+    "COSMOS_KEY": "secret-cosmos-key",
+    "COSMOS_DATABASE_NAME": "sasu_multitenant_staging",
+    "ALLOW_PRODUCTION_DATABASE": "false",
+    "JWT_SECRET_KEY": "secret-jwt",
+    "REFRESH_TOKEN_SECRET": "secret-refresh",
+    "ALLOWED_ORIGINS": "https://staging-client.example.invalid",
+}
+
+
+class FakeCosmosHelper:
+    def __init__(self, partition_key):
+        self.partition_key = partition_key
+        self.items = {}
+        self.writes = []
+
+    def _key(self, item_id, partition_value):
+        return (partition_value, item_id)
+
+    def read_item(self, item_id, partition_key):
+        key = self._key(item_id, partition_key)
+        if key not in self.items:
+            raise KeyError(item_id)
+        return dict(self.items[key])
+
+    def create_item(self, item):
+        partition_field = self.partition_key.lstrip("/")
+        partition_value = item[partition_field]
+        stored = dict(item)
+        self.items[self._key(stored["id"], partition_value)] = stored
+        self.writes.append(("create", stored["id"], partition_value))
+        return dict(stored)
+
+    def upsert_item(self, item, partition_value):
+        stored = dict(item)
+        self.items[self._key(stored["id"], partition_value)] = stored
+        self.writes.append(("upsert", stored["id"], partition_value))
+        return dict(stored)
+
+    def query_items(self, sql, params=None):
+        values = {param["name"]: param["value"] for param in (params or [])}
+        results = []
+        for item in self.items.values():
+            if "@tenant_id" in values and item.get("tenant_id") != values["@tenant_id"]:
+                continue
+            if "@code" in values and item.get("code") != values["@code"] and item.get("code_upper") != values["@code"]:
+                continue
+            if (
+                "@username" in values
+                and item.get("username") != values["@username"]
+                and item.get("username_normalized") != values["@username"]
+            ):
+                continue
+            results.append(dict(item))
+        return results
+
+
+class CosmosPersistenceTest(unittest.TestCase):
+    def test_tenant_loyola_persists_in_tenants_v2_repository(self):
+        helper = FakeCosmosHelper("/id")
+        repo = CosmosTenantRepository(helper)
+        tenant = Tenant(id=LOYOLA_TENANT_ID, code=LOYOLA_TENANT_CODE, name="LOYOLA", status=TenantStatus.TRIAL)
+
+        repo.create(tenant)
+        restarted_repo = CosmosTenantRepository(helper)
+
+        self.assertEqual(restarted_repo.get_by_id(LOYOLA_TENANT_ID).name, "LOYOLA")
+        self.assertEqual(restarted_repo.get_by_code(LOYOLA_TENANT_CODE).id, LOYOLA_TENANT_ID)
+
+    def test_user_persists_in_users_v2_with_tenant_partition(self):
+        helper = FakeCosmosHelper("/tenant_id")
+        repo = CosmosUserRepository(helper)
+        user = MultitenantUser(
+            id=LOYOLA_ADMIN_USER_ID,
+            tenant_id=LOYOLA_TENANT_ID,
+            username=LOYOLA_ADMIN_USERNAME,
+            password_hash="$2b$hash-only",
+            roles=["tenant_admin"],
+        )
+
+        repo.create(user)
+        restarted_repo = CosmosUserRepository(helper)
+
+        self.assertEqual(restarted_repo.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID).username, LOYOLA_ADMIN_USERNAME)
+        self.assertEqual(
+            restarted_repo.get_by_username(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USERNAME).id,
+            LOYOLA_ADMIN_USER_ID,
+        )
+        self.assertIn(("create", LOYOLA_ADMIN_USER_ID, LOYOLA_TENANT_ID), helper.writes)
+
+    def test_same_username_in_different_tenants_does_not_collide(self):
+        helper = FakeCosmosHelper("/tenant_id")
+        repo = CosmosUserRepository(helper)
+        repo.create(
+            MultitenantUser(
+                id="loyola-admin",
+                tenant_id="loyola-demo",
+                username="admin.demo",
+                password_hash="$2b$hash",
+            )
+        )
+        repo.create(
+            MultitenantUser(
+                id="cres-admin",
+                tenant_id="cres-staging",
+                username="admin.demo",
+                password_hash="$2b$hash",
+            )
+        )
+
+        self.assertEqual(repo.get_by_username("loyola-demo", "admin.demo").id, "loyola-admin")
+        self.assertEqual(repo.get_by_username("cres-staging", "admin.demo").id, "cres-admin")
+
+    def test_apply_provisions_hash_login_and_temporary_password_flag(self):
+        tenants = InMemoryTenantRepository([])
+        users = InMemoryUserRepository([])
+        students = InMemoryTenantAwareStudentRepository([])
+        output = io.StringIO()
+
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=tenants,
+            user_repo=users,
+            students_repo=students,
+            env=STAGING_ENV,
+            output=output,
+        )
+        temporary_password = self._temporary_password_from_output(output.getvalue())
+        stored_user = users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID)
+
+        self.assertIsNotNone(tenants.get_by_id(LOYOLA_TENANT_ID))
+        self.assertIsNotNone(stored_user)
+        self.assertNotEqual(stored_user.password_hash, temporary_password)
+        self.assertTrue(verify_password(temporary_password, stored_user.password_hash))
+
+        service = InstitutionalAuthService(tenants, users, InMemoryAuditLogger())
+        response = service.login(
+            InstitutionalLoginRequest(
+                institution_code=LOYOLA_TENANT_CODE,
+                username=LOYOLA_ADMIN_USERNAME,
+                password=temporary_password,
+            )
+        )
+        self.assertEqual(response.tenant_id, LOYOLA_TENANT_ID)
+        self.assertTrue(response.requires_password_change)
+
+    def test_restart_repositories_does_not_remove_user(self):
+        tenant_helper = FakeCosmosHelper("/id")
+        user_helper = FakeCosmosHelper("/tenant_id")
+        students = InMemoryTenantAwareStudentRepository([])
+        output = io.StringIO()
+
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=CosmosTenantRepository(tenant_helper),
+            user_repo=CosmosUserRepository(user_helper),
+            students_repo=students,
+            env=STAGING_ENV,
+            output=output,
+        )
+
+        restarted_users = CosmosUserRepository(user_helper)
+        self.assertIsNotNone(restarted_users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID))
+
+    def test_loyola_user_cannot_query_cres_staging_student(self):
+        tenants = InMemoryTenantRepository(
+            [Tenant(id=LOYOLA_TENANT_ID, code=LOYOLA_TENANT_CODE, name="LOYOLA", status=TenantStatus.TRIAL)]
+        )
+        users = InMemoryUserRepository([])
+        students = InMemoryTenantAwareStudentRepository(
+            [{"id": "cres-only", "tenant_id": "cres-staging", "matricula": "CRES-001"}]
+        )
+        output = io.StringIO()
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=tenants,
+            user_repo=users,
+            students_repo=students,
+            env=STAGING_ENV,
+            output=output,
+        )
+        password = self._temporary_password_from_output(output.getvalue())
+        service = InstitutionalAuthService(tenants, users, InMemoryAuditLogger())
+        token = service.login(
+            InstitutionalLoginRequest(
+                institution_code=LOYOLA_TENANT_CODE,
+                username=LOYOLA_ADMIN_USERNAME,
+                password=password,
+            )
+        )
+        context = service.context_from_token(token.access_token)
+
+        self.assertIsNone(students.get_student(context.tenant_id, "cres-only"))
+
+    def test_command_is_idempotent_and_does_not_recreate_password(self):
+        tenants = InMemoryTenantRepository([])
+        users = InMemoryUserRepository([])
+        students = InMemoryTenantAwareStudentRepository([])
+        first_output = io.StringIO()
+        second_output = io.StringIO()
+
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=tenants,
+            user_repo=users,
+            students_repo=students,
+            env=STAGING_ENV,
+            output=first_output,
+        )
+        first_hash = users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID).password_hash
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=tenants,
+            user_repo=users,
+            students_repo=students,
+            env=STAGING_ENV,
+            output=second_output,
+        )
+
+        self.assertEqual(users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID).password_hash, first_hash)
+        self.assertNotIn("TEMPORARY_PASSWORD_ONE_TIME=", second_output.getvalue())
+        self.assertEqual(len(students.list_students(LOYOLA_TENANT_ID)), 2)
+
+    def test_dry_run_does_not_write(self):
+        tenants = InMemoryTenantRepository([])
+        users = InMemoryUserRepository([])
+        students = InMemoryTenantAwareStudentRepository([])
+        output = io.StringIO()
+
+        provision_loyola_demo(
+            apply=False,
+            tenant_repo=tenants,
+            user_repo=users,
+            students_repo=students,
+            env=STAGING_ENV,
+            output=output,
+        )
+
+        self.assertIsNone(tenants.get_by_id(LOYOLA_TENANT_ID))
+        self.assertIsNone(users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID))
+        self.assertEqual(students.list_students(LOYOLA_TENANT_ID), [])
+
+    def test_apply_rejects_sasu_database(self):
+        env = dict(STAGING_ENV, COSMOS_DATABASE_NAME="SASU")
+        with self.assertRaises(StagingConfigurationError):
+            provision_loyola_demo(
+                apply=True,
+                tenant_repo=InMemoryTenantRepository([]),
+                user_repo=InMemoryUserRepository([]),
+                students_repo=InMemoryTenantAwareStudentRepository([]),
+                env=env,
+                output=io.StringIO(),
+            )
+
+    def test_output_does_not_print_environment_secrets_or_hashes(self):
+        output = io.StringIO()
+        provision_loyola_demo(
+            apply=True,
+            tenant_repo=InMemoryTenantRepository([]),
+            user_repo=InMemoryUserRepository([]),
+            students_repo=InMemoryTenantAwareStudentRepository([]),
+            env=STAGING_ENV,
+            output=output,
+        )
+        text = output.getvalue()
+
+        self.assertNotIn(STAGING_ENV["COSMOS_KEY"], text)
+        self.assertNotIn(STAGING_ENV["JWT_SECRET_KEY"], text)
+        self.assertNotIn(STAGING_ENV["REFRESH_TOKEN_SECRET"], text)
+        self.assertNotIn("password_hash", text)
+
+    @staticmethod
+    def _temporary_password_from_output(text):
+        for line in text.splitlines():
+            if line.startswith("TEMPORARY_PASSWORD_ONE_TIME="):
+                return line.split("=", 1)[1]
+        raise AssertionError("Temporary password was not printed")
+
+
+if __name__ == "__main__":
+    unittest.main()
