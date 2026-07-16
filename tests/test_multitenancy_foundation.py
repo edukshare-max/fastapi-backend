@@ -4,9 +4,8 @@ from datetime import timedelta
 from fastapi import HTTPException
 from jose import jwt
 
-from auth_service import ALGORITHM, AuthService, SECRET_KEY
 from multitenancy_audit import InMemoryAuditLogger
-from multitenancy_auth import InstitutionalAuthService, GENERIC_LOGIN_ERROR
+from multitenancy_auth import ALGORITHM, SECRET_KEY, InstitutionalAuthService, GENERIC_LOGIN_ERROR, hash_password
 from multitenancy_files import assert_file_belongs_to_tenant, build_tenant_file_path
 from multitenancy_models import (
     InstitutionalLoginRequest,
@@ -117,7 +116,7 @@ class MultitenancyFoundationTest(unittest.TestCase):
                 Tenant(id="blocked", code="BLOCKED-2026", name="Blocked", status=TenantStatus.SUSPENDED),
             ]
         )
-        password_hash = AuthService.hash_password("Correcta123")
+        password_hash = hash_password("Correcta123")
         self.users = InMemoryUserRepository(
             [
                 MultitenantUser(

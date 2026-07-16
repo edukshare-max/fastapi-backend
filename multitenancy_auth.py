@@ -10,8 +10,8 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from passlib.context import CryptContext
 
-from auth_service import ALGORITHM, AuthService, SECRET_KEY
 from multitenancy_audit import InMemoryAuditLogger
 from multitenancy_models import (
     ChangeTemporaryPasswordRequest,
@@ -25,6 +25,8 @@ from multitenancy_models import (
 from multitenancy_repositories import TenantRepository, UserRepository
 
 
+SECRET_KEY = os.environ.get("JWT_SECRET_KEY", secrets.token_urlsafe(32))
+ALGORITHM = "HS256"
 GENERIC_LOGIN_ERROR = "Credenciales invalidas"
 MULTITENANT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.environ.get("MULTITENANT_ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.environ.get("REFRESH_TOKEN_EXPIRE_DAYS", "14"))
@@ -32,6 +34,34 @@ LOGIN_RATE_LIMIT = int(os.environ.get("LOGIN_RATE_LIMIT", "10"))
 LOCKOUT_ATTEMPTS = int(os.environ.get("LOGIN_LOCKOUT_ATTEMPTS", "5"))
 LOCKOUT_MINUTES = int(os.environ.get("LOGIN_LOCKOUT_MINUTES", "15"))
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__truncate_error=False)
+
+
+def _truncate_bcrypt_password(password: str) -> str:
+    password_bytes = password.encode("utf-8")
+    if len(password_bytes) > 72:
+        return password_bytes[:72].decode("utf-8", errors="ignore")
+    return password
+
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(_truncate_bcrypt_password(password))
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(_truncate_bcrypt_password(plain_password), hashed_password)
+
+
+def validate_password_strength(password: str) -> tuple[bool, str]:
+    if len(password) < 8:
+        return False, "La contrasena debe tener al menos 8 caracteres"
+    if not any(char.isupper() for char in password):
+        return False, "La contrasena debe contener al menos una mayuscula"
+    if not any(char.islower() for char in password):
+        return False, "La contrasena debe contener al menos una minuscula"
+    if not any(char.isdigit() for char in password):
+        return False, "La contrasena debe contener al menos un numero"
+    return True, "Contrasena valida"
 
 
 class InstitutionalAuthService:
@@ -70,7 +100,7 @@ class InstitutionalAuthService:
             self._audit_failed_login(tenant.id, user.id, ip_address, user_agent, correlation_id)
             raise self._invalid_credentials()
 
-        if not AuthService.verify_password(payload.password, user.password_hash):
+        if not verify_password(payload.password, user.password_hash):
             self._register_failed_attempt(user)
             self._audit_failed_login(tenant.id, None, ip_address, user_agent, correlation_id)
             raise self._invalid_credentials()
@@ -196,12 +226,12 @@ class InstitutionalAuthService:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Usuario no autorizado")
         if not user.temporary_password:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="La contrasena temporal ya fue cambiada")
-        ok, message = AuthService.validate_password_strength(payload.new_password)
+        ok, message = validate_password_strength(payload.new_password)
         if not ok or len(payload.new_password) < 12:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
-        if not AuthService.verify_password(payload.current_password, user.password_hash):
+        if not verify_password(payload.current_password, user.password_hash):
             raise self._invalid_credentials()
-        user.password_hash = AuthService.hash_password(payload.new_password)
+        user.password_hash = hash_password(payload.new_password)
         user.temporary_password = False
         user.password_changed_at = datetime.now(timezone.utc)
         user.session_version += 1

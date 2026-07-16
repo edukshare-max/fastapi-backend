@@ -55,10 +55,18 @@ def patched_env(values, remove=()):
                 os.environ[key] = value
 
 
-def import_main_fresh():
-    for module_name in ["main", "cosmos_helper", "auth_service", "multitenancy_auth", "multitenancy_provisioning"]:
+def import_staging_main_fresh():
+    for module_name in [
+        "staging_main",
+        "main",
+        "cosmos_helper",
+        "auth_service",
+        "auth_models",
+        "multitenancy_auth",
+        "multitenancy_provisioning",
+    ]:
         sys.modules.pop(module_name, None)
-    return importlib.import_module("main")
+    return importlib.import_module("staging_main")
 
 
 def route_endpoint(app, path):
@@ -94,16 +102,18 @@ class FakeCosmosClient:
 class MultitenantStagingStartupTest(unittest.TestCase):
     def import_staging_main(self):
         with patched_env(STAGING_ENV, remove=LEGACY_ENV_KEYS):
-            return import_main_fresh()
+            return import_staging_main_fresh()
 
-    def test_main_imports_in_staging_without_legacy_variables(self):
+    def test_staging_main_app_exists_without_legacy_variables(self):
         module = self.import_staging_main()
         self.assertIsInstance(module.app, FastAPI)
-        with open("main.py", encoding="utf-8") as handle:
+        with open("staging_main.py", encoding="utf-8") as handle:
             self.assertEqual(handle.read().count("FastAPI("), 1)
-        self.assertFalse(module._legacy_routes_enabled)
         self.assertEqual(module.app.state.multitenant_staging_settings.cosmos_database_name, "sasu_multitenant_staging")
         self.assertFalse(hasattr(module, "carnets"))
+        self.assertNotIn("main", sys.modules)
+        self.assertNotIn("auth_service", sys.modules)
+        self.assertNotIn("auth_models", sys.modules)
 
     def test_legacy_routes_are_not_registered_when_disabled(self):
         module = self.import_staging_main()
@@ -132,9 +142,9 @@ class MultitenantStagingStartupTest(unittest.TestCase):
     def test_string_boolean_values_are_parsed_robustly(self):
         env = dict(STAGING_ENV, ENABLE_MULTITENANT_ROUTES=" 'true' ", ENABLE_LEGACY_ROUTES=' "false" ')
         with patched_env(env, remove=LEGACY_ENV_KEYS):
-            module = import_main_fresh()
-        self.assertTrue(module._multitenant_routes_enabled)
-        self.assertFalse(module._legacy_routes_enabled)
+            module = import_staging_main_fresh()
+        self.assertTrue(module.app.state.multitenant_staging_settings.enable_multitenant_routes)
+        self.assertFalse(module.app.state.multitenant_staging_settings.enable_legacy_routes)
         paths = {route.path for route in module.app.routes}
         self.assertIn("/health", paths)
         self.assertIn("/ready", paths)
@@ -201,7 +211,7 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         output = io.StringIO()
         with patched_env(STAGING_ENV, remove=LEGACY_ENV_KEYS):
             with redirect_stdout(output):
-                import_main_fresh()
+                import_staging_main_fresh()
         text = output.getvalue()
         self.assertIn("APP_ENV=staging", text)
         self.assertIn("ENABLE_MULTITENANT_ROUTES=true", text)
@@ -214,13 +224,11 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         self.assertNotIn("Roles disponibles", text)
         self.assertNotIn("Campus disponibles", text)
 
-    def test_legacy_enabled_still_requires_legacy_container_variables(self):
-        env = dict(STAGING_ENV, ENABLE_LEGACY_ROUTES="true", COSMOS_DATABASE_NAME="legacy_test")
-        env["ALLOW_CUSTOM_STAGING_DATABASE"] = "true"
+    def test_staging_main_rejects_legacy_routes_enabled(self):
+        env = dict(STAGING_ENV, ENABLE_LEGACY_ROUTES="true")
         with patched_env(env, remove=LEGACY_ENV_KEYS):
-            with self.assertRaises(KeyError) as exc:
-                import_main_fresh()
-        self.assertEqual(exc.exception.args[0], "COSMOS_CONTAINER_CARNETS")
+            with self.assertRaises(StagingConfigurationError):
+                import_staging_main_fresh()
 
     def test_render_staging_yaml_contains_required_runtime_keys(self):
         with open("render.staging.yaml", encoding="utf-8") as handle:
@@ -242,6 +250,8 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         self.assertIn('value: "false"', text)
         self.assertIn("key: PYTHON_VERSION", text)
         self.assertIn('value: "3.13.7"', text)
+        self.assertIn("pip install -r requirements.staging.txt", text)
+        self.assertIn("uvicorn staging_main:app", text)
 
 
 if __name__ == "__main__":
