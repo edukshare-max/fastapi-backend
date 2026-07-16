@@ -1,12 +1,14 @@
 import importlib
 import asyncio
+import io
 import os
 import sys
 import unittest
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stdout
 from types import SimpleNamespace
 
 from fastapi import HTTPException
+from fastapi import FastAPI
 
 from multitenancy_provisioning import MULTITENANT_CONTAINERS
 from multitenancy_staging_config import StagingConfigurationError, load_staging_settings
@@ -54,7 +56,7 @@ def patched_env(values, remove=()):
 
 
 def import_main_fresh():
-    for module_name in ["main", "cosmos_helper"]:
+    for module_name in ["main", "cosmos_helper", "auth_service", "multitenancy_auth", "multitenancy_provisioning"]:
         sys.modules.pop(module_name, None)
     return importlib.import_module("main")
 
@@ -96,6 +98,9 @@ class MultitenantStagingStartupTest(unittest.TestCase):
 
     def test_main_imports_in_staging_without_legacy_variables(self):
         module = self.import_staging_main()
+        self.assertIsInstance(module.app, FastAPI)
+        with open("main.py", encoding="utf-8") as handle:
+            self.assertEqual(handle.read().count("FastAPI("), 1)
         self.assertFalse(module._legacy_routes_enabled)
         self.assertEqual(module.app.state.multitenant_staging_settings.cosmos_database_name, "sasu_multitenant_staging")
         self.assertFalse(hasattr(module, "carnets"))
@@ -123,6 +128,17 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         )
         response = asyncio.run(route_endpoint(module.app, "/health")())
         self.assertEqual(response, {"status": "ok", "service": "sasu-multitenant-staging"})
+
+    def test_string_boolean_values_are_parsed_robustly(self):
+        env = dict(STAGING_ENV, ENABLE_MULTITENANT_ROUTES=" 'true' ", ENABLE_LEGACY_ROUTES=' "false" ')
+        with patched_env(env, remove=LEGACY_ENV_KEYS):
+            module = import_main_fresh()
+        self.assertTrue(module._multitenant_routes_enabled)
+        self.assertFalse(module._legacy_routes_enabled)
+        paths = {route.path for route in module.app.routes}
+        self.assertIn("/health", paths)
+        self.assertIn("/ready", paths)
+        self.assertIn("/v2/auth/login", paths)
 
     def test_ready_reports_staging_database(self):
         module = self.import_staging_main()
@@ -180,6 +196,23 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         module = self.import_staging_main()
         paths = [route.path for route in module.app.routes]
         self.assertEqual(paths.count("/health"), 1)
+
+    def test_legacy_roles_and_campus_are_not_logged_in_staging(self):
+        output = io.StringIO()
+        with patched_env(STAGING_ENV, remove=LEGACY_ENV_KEYS):
+            with redirect_stdout(output):
+                import_main_fresh()
+        text = output.getvalue()
+        self.assertIn("APP_ENV=staging", text)
+        self.assertIn("ENABLE_MULTITENANT_ROUTES=true", text)
+        self.assertIn("ENABLE_LEGACY_ROUTES=false", text)
+        self.assertIn("/health", text)
+        self.assertIn("/ready", text)
+        self.assertIn("/v2/public/institution/resolve", text)
+        self.assertIn("/v2/auth/login", text)
+        self.assertNotIn("AuthService inicializado correctamente", text)
+        self.assertNotIn("Roles disponibles", text)
+        self.assertNotIn("Campus disponibles", text)
 
     def test_legacy_enabled_still_requires_legacy_container_variables(self):
         env = dict(STAGING_ENV, ENABLE_LEGACY_ROUTES="true", COSMOS_DATABASE_NAME="legacy_test")

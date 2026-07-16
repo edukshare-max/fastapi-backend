@@ -4,18 +4,7 @@ import subprocess
 import os
 from datetime import datetime, timedelta, timezone
 
-sys.stderr.write("=" * 80 + "\n")
-sys.stderr.write("FASTAPI MAIN.PY LOADING - Checking for /carnet/search endpoint\n")
-sys.stderr.flush()
-try:
-    commit_hash = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], 
-                                        cwd=os.path.dirname(os.path.abspath(__file__))).decode().strip()
-    sys.stderr.write(f"   Git commit: {commit_hash}\n")
-except Exception as e:
-    sys.stderr.write(f"   Git commit: unknown ({e})\n")
-sys.stderr.write(f"   Time: {datetime.now().isoformat()}\n")
-sys.stderr.write("=" * 80 + "\n")
-sys.stderr.flush()
+# Keep startup diagnostics below focused on non-sensitive staging configuration.
 
 # Sistema de Autenticación CRES - v1.1
 from fastapi import FastAPI, HTTPException, Body, Depends, Request
@@ -31,6 +20,20 @@ from typing import Optional
 import uuid
 import json
 import re
+
+load_dotenv()
+
+
+def _parse_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().strip('"').strip("'").lower() in {"1", "true", "yes", "y", "on"}
+
+
+_multitenant_routes_enabled = _parse_bool_env("ENABLE_MULTITENANT_ROUTES")
+_legacy_routes_enabled = _parse_bool_env("ENABLE_LEGACY_ROUTES", True)
+_app_env = os.environ.get("APP_ENV", "").strip().strip('"').strip("'").lower()
 
 # Importar router de actualizaciones
 from update_routes import router as updates_router
@@ -50,27 +53,76 @@ from multitenancy_seed import build_staging_students, build_staging_tenants, bui
 from multitenancy_staging_config import load_staging_settings
 
 # Importar modelos y servicios de autenticación
-from auth_models import (
-    UserCreate, UserResponse, UserInDB, UserUpdate, LoginRequest, Token, 
-    UserRole, Campus, AuditLog, AuditAction
-)
-from auth_service import (
-    AuthService, get_current_user, require_role, require_permission,
-    is_user_locked, should_lock_user, calculate_lockout_time,
-    ACCESS_TOKEN_EXPIRE_MINUTES
-)
+if _legacy_routes_enabled:
+    from auth_models import (
+        UserCreate, UserResponse, UserInDB, UserUpdate, LoginRequest, Token,
+        UserRole, Campus, AuditLog, AuditAction
+    )
+    from auth_service import (
+        AuthService, get_current_user, require_role, require_permission,
+        is_user_locked, should_lock_user, calculate_lockout_time,
+        ACCESS_TOKEN_EXPIRE_MINUTES
+    )
+else:
+    class _DisabledLegacyModel(BaseModel):
+        pass
 
-load_dotenv()
+    class _DisabledLegacyValue:
+        value = "disabled"
+
+    class _DisabledLegacyEnum:
+        ADMIN = _DisabledLegacyValue()
+        LLANO_LARGO = _DisabledLegacyValue()
+
+        def __iter__(self):
+            return iter(())
+
+    UserCreate = UserResponse = UserInDB = UserUpdate = LoginRequest = Token = AuditLog = _DisabledLegacyModel
+    UserRole = Campus = AuditAction = _DisabledLegacyEnum()
+    ACCESS_TOKEN_EXPIRE_MINUTES = 0
+
+    class AuthService:
+        @staticmethod
+        def validate_password_strength(password):
+            return False, "Legacy routes disabled"
+
+        @staticmethod
+        def generate_user_id(username, campus):
+            return "legacy-disabled"
+
+        @staticmethod
+        def hash_password(password):
+            return "legacy-disabled"
+
+        @staticmethod
+        def verify_password(password, password_hash):
+            return False
+
+        @staticmethod
+        def create_access_token(*args, **kwargs):
+            return "legacy-disabled"
+
+    async def get_current_user():
+        raise HTTPException(status_code=404, detail="Endpoint no encontrado")
+
+    def require_role(*args, **kwargs):
+        async def dependency():
+            raise HTTPException(status_code=404, detail="Endpoint no encontrado")
+        return dependency
+
+    require_permission = require_role
+
+    def is_user_locked(user):
+        return False
+
+    def should_lock_user(user):
+        return False
+
+    def calculate_lockout_time():
+        return datetime.utcnow()
 
 app = FastAPI()
 
-sys.stderr.write("=" * 80 + "\n")
-sys.stderr.write("FASTAPI APP CREATED SUCCESSFULLY\n")
-sys.stderr.write("=" * 80 + "\n")
-sys.stderr.flush()
-
-_multitenant_routes_enabled = os.environ.get("ENABLE_MULTITENANT_ROUTES", "false").lower() == "true"
-_legacy_routes_enabled = os.environ.get("ENABLE_LEGACY_ROUTES", "true").lower() == "true"
 _allowed_origins = ["*"]
 if _multitenant_routes_enabled:
     _allowed_origins = [
@@ -1491,8 +1543,24 @@ def _disable_legacy_routes_for_staging() -> None:
 if not _legacy_routes_enabled:
     _disable_legacy_routes_for_staging()
 
-print("Endpoints de autenticacion registrados")
-print(f"Roles disponibles: {[r.value for r in UserRole]}")
-print(f"Campus disponibles: {[c.value for c in Campus]}")
+def _log_startup_configuration() -> None:
+    print(f"APP_ENV={_app_env or os.environ.get('APP_ENV', '')}")
+    print(f"ENABLE_MULTITENANT_ROUTES={str(_multitenant_routes_enabled).lower()}")
+    print(f"ENABLE_LEGACY_ROUTES={str(_legacy_routes_enabled).lower()}")
+    print(f"COSMOS_DATABASE_NAME={os.environ.get('COSMOS_DATABASE_NAME', '')}")
+    route_summary = []
+    for route in app.routes:
+        path = getattr(route, "path", "")
+        methods = ",".join(sorted(getattr(route, "methods", []) or []))
+        route_summary.append(f"{methods} {path}".strip())
+    print("REGISTERED_ROUTES=" + json.dumps(sorted(route_summary)))
+
+
+_log_startup_configuration()
+
+if _legacy_routes_enabled:
+    print("Endpoints de autenticacion registrados")
+    print(f"Roles disponibles: {[r.value for r in UserRole]}")
+    print(f"Campus disponibles: {[c.value for c in Campus]}")
 
 # Force redeploy 2025-11-24 13:35

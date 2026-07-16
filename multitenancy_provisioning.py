@@ -7,9 +7,6 @@ import string
 from dataclasses import dataclass
 from typing import List
 
-from auth_service import AuthService
-
-
 @dataclass(frozen=True)
 class ContainerDefinition:
     name: str
@@ -47,6 +44,8 @@ STAGING_TENANTS = [
 
 
 def generate_temporary_password(length: int = 18) -> str:
+    from auth_service import AuthService
+
     alphabet = string.ascii_letters + string.digits + "!@#$%*-_"
     while True:
         password = "".join(secrets.choice(alphabet) for _ in range(length))
@@ -124,6 +123,8 @@ def main() -> int:
     elif args.resource == "tenant" and args.action == "modules":
         _print_plan("tenant.modules", {"id": args.id, "enabled_modules": args.enable}, apply)
     elif args.resource == "user" and args.action in {"create-admin", "reset-password"}:
+        from auth_service import AuthService
+
         temporary_password = generate_temporary_password()
         _print_plan(
             f"user.{args.action}",

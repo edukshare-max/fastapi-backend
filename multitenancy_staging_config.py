@@ -37,6 +37,12 @@ class StagingConfigurationError(RuntimeError):
     pass
 
 
+def parse_bool(value: str, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().strip('"').strip("'").lower() in {"1", "true", "yes", "y", "on"}
+
+
 def parse_allowed_origins(value: str) -> tuple[str, ...]:
     origins = tuple(origin.strip() for origin in value.split(",") if origin.strip())
     if "*" in origins:
@@ -58,8 +64,8 @@ def load_staging_settings(env: Optional[dict] = None, *, required: Iterable[str]
         raise StagingConfigurationError(f"Missing required staging settings: {', '.join(missing)}")
 
     app_env = source["APP_ENV"].strip().lower()
-    routes_enabled = source["ENABLE_MULTITENANT_ROUTES"].strip().lower() == "true"
-    legacy_routes_enabled = source["ENABLE_LEGACY_ROUTES"].strip().lower() == "true"
+    routes_enabled = parse_bool(source["ENABLE_MULTITENANT_ROUTES"])
+    legacy_routes_enabled = parse_bool(source["ENABLE_LEGACY_ROUTES"])
     database_name = source["COSMOS_DATABASE_NAME"].strip()
     allow_production = source.get("ALLOW_PRODUCTION_DATABASE", "false").strip().lower() == "true"
 
