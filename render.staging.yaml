@@ -10,6 +10,10 @@ services:
         value: staging
       - key: ENABLE_MULTITENANT_ROUTES
         value: "true"
+      - key: ENABLE_LEGACY_ROUTES
+        value: "false"
+      - key: PYTHON_VERSION
+        value: "3.13.7"
       - key: COSMOS_DATABASE_NAME
         value: sasu_multitenant_staging
       - key: ALLOW_PRODUCTION_DATABASE

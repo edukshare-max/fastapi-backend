@@ -200,8 +200,9 @@ def create_multitenancy_health_router(required_containers: list[str]) -> APIRout
         return {
             "status": "ready",
             "environment": settings.app_env,
-            "database": "staging",
+            "database": settings.cosmos_database_name,
             "multitenant_routes": settings.enable_multitenant_routes,
+            "legacy_routes": settings.enable_legacy_routes,
             "containers_configured": sorted(required_containers),
             "production_database": False,
         }

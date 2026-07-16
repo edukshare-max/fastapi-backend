@@ -8,6 +8,7 @@ from typing import Iterable, Optional
 REQUIRED_STAGING_ENV = {
     "APP_ENV",
     "ENABLE_MULTITENANT_ROUTES",
+    "ENABLE_LEGACY_ROUTES",
     "COSMOS_ENDPOINT",
     "COSMOS_KEY",
     "COSMOS_DATABASE_NAME",
@@ -26,6 +27,7 @@ class StagingSettings:
     enable_multitenant_routes: bool
     cosmos_database_name: str
     allowed_origins: tuple[str, ...]
+    enable_legacy_routes: bool = False
     allow_production_database: bool = False
 
 
@@ -55,6 +57,7 @@ def load_staging_settings(env: Optional[dict] = None, *, required: Iterable[str]
 
     app_env = source["APP_ENV"].strip().lower()
     routes_enabled = source["ENABLE_MULTITENANT_ROUTES"].strip().lower() == "true"
+    legacy_routes_enabled = source["ENABLE_LEGACY_ROUTES"].strip().lower() == "true"
     database_name = source["COSMOS_DATABASE_NAME"].strip()
     allow_production = source.get("ALLOW_PRODUCTION_DATABASE", "false").strip().lower() == "true"
 
@@ -66,11 +69,14 @@ def load_staging_settings(env: Optional[dict] = None, *, required: Iterable[str]
         raise StagingConfigurationError("Refusing to use a database name that looks productive")
     if database_name != DEFAULT_STAGING_DATABASE and not source.get("ALLOW_CUSTOM_STAGING_DATABASE"):
         raise StagingConfigurationError("Custom staging database requires ALLOW_CUSTOM_STAGING_DATABASE")
+    if legacy_routes_enabled and database_name == DEFAULT_STAGING_DATABASE:
+        raise StagingConfigurationError("ENABLE_LEGACY_ROUTES must be false for multitenant staging database")
 
     return StagingSettings(
         app_env=app_env,
         enable_multitenant_routes=routes_enabled,
         cosmos_database_name=database_name,
         allowed_origins=parse_allowed_origins(source["ALLOWED_ORIGINS"]),
+        enable_legacy_routes=legacy_routes_enabled,
         allow_production_database=allow_production,
     )

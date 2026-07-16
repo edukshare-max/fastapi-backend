@@ -178,9 +178,15 @@ class InMemoryTenantAwareStudentRepository(TenantAwareStudentRepository):
 
 class CosmosTenantAwareStudentRepository(TenantAwareStudentRepository):
     def __init__(self, helper=None):
-        from cosmos_helper import CosmosDBHelper
+        self._students = helper
 
-        self.students = helper or CosmosDBHelper("students_v2", "/tenant_id")
+    @property
+    def students(self):
+        if self._students is None:
+            from cosmos_helper import CosmosDBHelper
+
+            self._students = CosmosDBHelper("students_v2", "/tenant_id")
+        return self._students
 
     def get_student(self, tenant_id: str, student_id: str) -> Optional[dict]:
         query = "SELECT * FROM c WHERE c.tenant_id = @tenant_id AND c.id = @id"

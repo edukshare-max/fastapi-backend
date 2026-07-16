@@ -70,6 +70,7 @@ sys.stderr.write("=" * 80 + "\n")
 sys.stderr.flush()
 
 _multitenant_routes_enabled = os.environ.get("ENABLE_MULTITENANT_ROUTES", "false").lower() == "true"
+_legacy_routes_enabled = os.environ.get("ENABLE_LEGACY_ROUTES", "true").lower() == "true"
 _allowed_origins = ["*"]
 if _multitenant_routes_enabled:
     _allowed_origins = [
@@ -98,11 +99,11 @@ async def add_security_headers(request, call_next):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 
-# Montar router de actualizaciones
-app.include_router(updates_router)
-app.include_router(appointments_router)
-app.include_router(referrals_router)
-app.include_router(tickets_router)
+if _legacy_routes_enabled:
+    app.include_router(updates_router)
+    app.include_router(appointments_router)
+    app.include_router(referrals_router)
+    app.include_router(tickets_router)
 
 if _multitenant_routes_enabled:
     app.state.multitenant_staging_settings = load_staging_settings()
@@ -122,22 +123,24 @@ if _multitenant_routes_enabled:
     )
     app.include_router(create_multitenancy_health_router([item.name for item in MULTITENANT_CONTAINERS]))
 
-carnets = CosmosDBHelper(
-    os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
-)
-notas = CosmosDBHelper(
-    os.environ["COSMOS_CONTAINER_NOTAS"], "/matricula"
-)
-promociones_salud = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
-)
+if _legacy_routes_enabled:
+    carnets = CosmosDBHelper(
+        os.environ["COSMOS_CONTAINER_CARNETS"], "/id"
+    )
+    notas = CosmosDBHelper(
+        os.environ["COSMOS_CONTAINER_NOTAS"], "/matricula"
+    )
+    promociones_salud = CosmosDBHelper(
+        os.environ.get("COSMOS_CONTAINER_PROMOCIONES_SALUD", "promociones_salud"), "/id"
+    )
 
 # Helper para tarjeta de vacunación individual (aplicaciones por estudiante)
 # Contenedor: Tarjeta_vacunacion, Partition Key: /matricula
 # Solo se guardan aplicaciones individuales, NO campañas (campañas son solo locales)
-tarjeta_vacunacion = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_VACUNACION", "Tarjeta_vacunacion"), "/matricula"
-)
+if _legacy_routes_enabled:
+    tarjeta_vacunacion = CosmosDBHelper(
+        os.environ.get("COSMOS_CONTAINER_VACUNACION", "Tarjeta_vacunacion"), "/matricula"
+    )
 
 # Nota: Las campañas de vacunación NO se guardan en Cosmos DB
 # Se manejan localmente en el frontend y solo se genera PDF
@@ -870,14 +873,16 @@ def validate_supervisor_key(key_data: dict = Body(...)):
 # ============================================================================
 
 # Helper para contenedor de usuarios
-usuarios = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_USUARIOS", "usuarios"), "/id"
-)
+if _legacy_routes_enabled:
+    usuarios = CosmosDBHelper(
+        os.environ.get("COSMOS_CONTAINER_USUARIOS", "usuarios"), "/id"
+    )
 
 # Helper para auditoría
-auditoria = CosmosDBHelper(
-    os.environ.get("COSMOS_CONTAINER_AUDITORIA", "auditoria"), "/id"
-)
+if _legacy_routes_enabled:
+    auditoria = CosmosDBHelper(
+        os.environ.get("COSMOS_CONTAINER_AUDITORIA", "auditoria"), "/id"
+    )
 
 def log_audit(usuario: str, accion: AuditAction, recurso: Optional[str] = None, detalles: Optional[str] = None, ip: Optional[str] = None):
     """Registra una acción en el log de auditoría."""
@@ -1466,14 +1471,28 @@ async def obtener_estadisticas_vacunacion():
 # ============================================
 # SERVIR PANEL WEB DE ADMINISTRACIÓN
 # ============================================
-try:
-    app.mount("/admin", StaticFiles(directory="admin_panel", html=True), name="admin")
-    print("✅ Panel web admin disponible en /admin")
-except Exception as e:
-    print(f"⚠️  Panel web admin no disponible: {e}")
+if _legacy_routes_enabled:
+    try:
+        app.mount("/admin", StaticFiles(directory="admin_panel", html=True), name="admin")
+        print("Panel web admin disponible en /admin")
+    except Exception as e:
+        print(f"Panel web admin no disponible: {e}")
 
-print("✅ Endpoints de autenticación registrados")
-print(f"🔐 Roles disponibles: {[r.value for r in UserRole]}")
-print(f"🏫 Campus disponibles: {[c.value for c in Campus]}")
+
+def _disable_legacy_routes_for_staging() -> None:
+    allowed_paths = {"/health", "/ready"}
+    app.router.routes = [
+        route
+        for route in app.router.routes
+        if getattr(route, "path", "") in allowed_paths or getattr(route, "path", "").startswith("/v2")
+    ]
+
+
+if not _legacy_routes_enabled:
+    _disable_legacy_routes_for_staging()
+
+print("Endpoints de autenticacion registrados")
+print(f"Roles disponibles: {[r.value for r in UserRole]}")
+print(f"Campus disponibles: {[c.value for c in Campus]}")
 
 # Force redeploy 2025-11-24 13:35
