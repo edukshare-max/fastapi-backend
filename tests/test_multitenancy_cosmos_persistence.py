@@ -1,7 +1,10 @@
 import io
+import json
 import unittest
+from datetime import datetime, timezone
+from unittest.mock import patch
 
-from multitenancy_auth import InstitutionalAuthService, verify_password
+from multitenancy_auth import InstitutionalAuthService, hash_password, verify_password
 from multitenancy_audit import InMemoryAuditLogger
 from multitenancy_models import InstitutionalLoginRequest, MultitenantUser, Tenant, TenantStatus
 from multitenancy_provisioning import (
@@ -10,6 +13,7 @@ from multitenancy_provisioning import (
     LOYOLA_TENANT_CODE,
     LOYOLA_TENANT_ID,
     provision_loyola_demo,
+    reset_loyola_password,
 )
 from multitenancy_repositories import (
     CosmosTenantRepository,
@@ -296,12 +300,144 @@ class CosmosPersistenceTest(unittest.TestCase):
         self.assertNotIn(STAGING_ENV["REFRESH_TOKEN_SECRET"], text)
         self.assertNotIn("password_hash", text)
 
+    def test_reset_password_dry_run_does_not_write_or_generate_password(self):
+        users = InMemoryUserRepository([self._existing_loyola_user()])
+        output = io.StringIO()
+
+        with patch("multitenancy_provisioning.generate_temporary_password") as generator:
+            payload = reset_loyola_password(apply=False, user_repo=users, env=STAGING_ENV, output=output)
+
+        generator.assert_not_called()
+        self.assertEqual(payload["mode"], "dry-run")
+        self.assertEqual(payload["base"], "sasu_multitenant_staging")
+        self.assertEqual(payload["tenant_id"], LOYOLA_TENANT_ID)
+        self.assertEqual(payload["username"], LOYOLA_ADMIN_USERNAME)
+        self.assertEqual(payload["action"], "reset temporary password")
+        self.assertEqual(users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID).session_version, 3)
+        self.assertNotIn("TEMPORARY_PASSWORD_ONE_TIME", output.getvalue())
+        self.assertNotIn("password_hash", output.getvalue())
+
+    def test_reset_password_apply_rejects_sasu_database(self):
+        env = dict(STAGING_ENV, COSMOS_DATABASE_NAME="SASU")
+
+        with self.assertRaises(StagingConfigurationError):
+            reset_loyola_password(
+                apply=True,
+                user_repo=InMemoryUserRepository([self._existing_loyola_user()]),
+                env=env,
+                output=io.StringIO(),
+            )
+
+    def test_reset_password_apply_rejects_production_environment(self):
+        env = dict(STAGING_ENV, APP_ENV="production")
+
+        with self.assertRaises(StagingConfigurationError):
+            reset_loyola_password(
+                apply=True,
+                user_repo=InMemoryUserRepository([self._existing_loyola_user()]),
+                env=env,
+                output=io.StringIO(),
+            )
+
+    def test_reset_password_missing_user_is_not_created(self):
+        users = InMemoryUserRepository([])
+
+        with self.assertRaises(RuntimeError):
+            reset_loyola_password(apply=True, user_repo=users, env=STAGING_ENV, output=io.StringIO())
+
+        self.assertIsNone(users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID))
+
+    def test_reset_password_stores_hash_revokes_sessions_and_clears_lockout(self):
+        old_password = "OldPassword123"
+        locked_until = datetime(2026, 1, 2, tzinfo=timezone.utc)
+        existing_user = self._existing_loyola_user(
+            password_hash=hash_password(old_password),
+            session_version=7,
+            failed_login_attempts=4,
+            locked_until=locked_until,
+            temporary_password=False,
+            password_changed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            active=False,
+        )
+        users = InMemoryUserRepository([existing_user])
+        output = io.StringIO()
+
+        payload = reset_loyola_password(apply=True, user_repo=users, env=STAGING_ENV, output=output)
+        temporary_password = self._temporary_password_from_output(output.getvalue())
+        stored_user = users.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID)
+
+        self.assertEqual(payload["status"], "password-reset")
+        self.assertEqual(payload["temporary_password_created"], True)
+        self.assertEqual(payload["sessions_revoked"], True)
+        self.assertNotEqual(stored_user.password_hash, temporary_password)
+        self.assertNotEqual(stored_user.password_hash, existing_user.password_hash)
+        self.assertTrue(verify_password(temporary_password, stored_user.password_hash))
+        self.assertFalse(verify_password(old_password, stored_user.password_hash))
+        self.assertTrue(stored_user.temporary_password)
+        self.assertIsNone(stored_user.password_changed_at)
+        self.assertEqual(stored_user.session_version, 8)
+        self.assertEqual(stored_user.failed_login_attempts, 0)
+        self.assertIsNone(stored_user.locked_until)
+        self.assertTrue(stored_user.active)
+
+    def test_reset_password_does_not_modify_tenant_or_students(self):
+        tenant = Tenant(id=LOYOLA_TENANT_ID, code=LOYOLA_TENANT_CODE, name="LOYOLA", status=TenantStatus.TRIAL)
+        tenants = InMemoryTenantRepository([tenant])
+        students = InMemoryTenantAwareStudentRepository(
+            [{"id": "student-1", "tenant_id": LOYOLA_TENANT_ID, "matricula": "LOY-001"}]
+        )
+        users = InMemoryUserRepository([self._existing_loyola_user()])
+
+        reset_loyola_password(apply=True, user_repo=users, env=STAGING_ENV, output=io.StringIO())
+
+        self.assertEqual(tenants.get_by_id(LOYOLA_TENANT_ID).model_dump(), tenant.model_dump())
+        self.assertEqual(students.list_students(LOYOLA_TENANT_ID), [{"id": "student-1", "tenant_id": LOYOLA_TENANT_ID, "matricula": "LOY-001"}])
+
+    def test_reset_password_output_does_not_print_secrets_or_hashes(self):
+        output = io.StringIO()
+        reset_loyola_password(
+            apply=True,
+            user_repo=InMemoryUserRepository([self._existing_loyola_user()]),
+            env=STAGING_ENV,
+            output=output,
+        )
+        text = output.getvalue()
+        safe_json = text.split("TEMPORARY_PASSWORD_ONE_TIME=", 1)[0].strip()
+        payload = json.loads(safe_json)
+
+        self.assertEqual(payload["mode"], "apply")
+        self.assertEqual(payload["action"], "reset-loyola-password")
+        self.assertEqual(payload["database"], "sasu_multitenant_staging")
+        self.assertNotIn(STAGING_ENV["COSMOS_KEY"], text)
+        self.assertNotIn(STAGING_ENV["JWT_SECRET_KEY"], text)
+        self.assertNotIn(STAGING_ENV["REFRESH_TOKEN_SECRET"], text)
+        self.assertNotIn("password_hash", text)
+        self.assertNotIn("$2b$", text)
+
     @staticmethod
     def _temporary_password_from_output(text):
         for line in text.splitlines():
             if line.startswith("TEMPORARY_PASSWORD_ONE_TIME="):
                 return line.split("=", 1)[1]
         raise AssertionError("Temporary password was not printed")
+
+    @staticmethod
+    def _existing_loyola_user(**overrides):
+        values = {
+            "id": LOYOLA_ADMIN_USER_ID,
+            "tenant_id": LOYOLA_TENANT_ID,
+            "username": LOYOLA_ADMIN_USERNAME,
+            "password_hash": hash_password("ExistingPassword123"),
+            "roles": ["tenant_admin"],
+            "active": True,
+            "temporary_password": True,
+            "session_version": 3,
+            "failed_login_attempts": 0,
+            "locked_until": None,
+            "password_changed_at": None,
+        }
+        values.update(overrides)
+        return MultitenantUser(**values)
 
 
 if __name__ == "__main__":

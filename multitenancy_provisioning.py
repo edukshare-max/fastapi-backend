@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import string
 import sys
@@ -98,9 +99,16 @@ def generate_temporary_password(length: int = 18) -> str:
 
 
 def validate_apply_environment(env: Optional[dict] = None) -> None:
+    source = env or os.environ
+    if source.get("COSMOS_DATABASE_NAME", "").strip().lower() == "sasu":
+        raise StagingConfigurationError("Refusing to use production database SASU")
     settings = load_staging_settings(env)
     if settings.cosmos_database_name != DEFAULT_STAGING_DATABASE:
         raise StagingConfigurationError("COSMOS_DATABASE_NAME must be sasu_multitenant_staging")
+    if not settings.enable_multitenant_routes:
+        raise StagingConfigurationError("ENABLE_MULTITENANT_ROUTES must be true")
+    if settings.enable_legacy_routes:
+        raise StagingConfigurationError("ENABLE_LEGACY_ROUTES must be false")
     if settings.allow_production_database:
         raise StagingConfigurationError("ALLOW_PRODUCTION_DATABASE must be false")
 
@@ -231,15 +239,86 @@ def provision_loyola_demo(
     return payload
 
 
+def reset_loyola_password(
+    *,
+    apply: bool = False,
+    user_repo: Optional[UserRepository] = None,
+    env: Optional[dict] = None,
+    output: TextIO = sys.stdout,
+) -> dict:
+    if not apply:
+        payload = {
+            "action": "reset temporary password",
+            "base": DEFAULT_STAGING_DATABASE,
+            "mode": "dry-run",
+            "tenant_id": LOYOLA_TENANT_ID,
+            "username": LOYOLA_ADMIN_USERNAME,
+        }
+        _write_json(output, payload)
+        return payload
+
+    validate_apply_environment(env)
+    user_repo = user_repo or CosmosUserRepository()
+    user = user_repo.get_by_id(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USER_ID)
+    if not user:
+        raise RuntimeError("LOYOLA user not found; refusing to create a replacement user")
+    if user.tenant_id != LOYOLA_TENANT_ID or user.id != LOYOLA_ADMIN_USER_ID:
+        raise RuntimeError("Resolved user does not match the LOYOLA admin identity")
+    if user.username.strip().lower() != LOYOLA_ADMIN_USERNAME:
+        raise RuntimeError("Resolved user username does not match admin.loyola")
+    username_user = user_repo.get_by_username(LOYOLA_TENANT_ID, LOYOLA_ADMIN_USERNAME)
+    if not username_user or username_user.id != LOYOLA_ADMIN_USER_ID:
+        raise RuntimeError("LOYOLA username lookup does not match the expected user")
+
+    temporary_password = generate_temporary_password(18)
+    ok, message = validate_password_strength(temporary_password)
+    if not ok:
+        raise RuntimeError(message)
+
+    updated_user = user.model_copy(
+        update={
+            "password_hash": hash_password(temporary_password),
+            "temporary_password": True,
+            "password_changed_at": None,
+            "session_version": user.session_version + 1,
+            "failed_login_attempts": 0,
+            "locked_until": None,
+            "active": True,
+        }
+    )
+    user_repo.update(updated_user)
+
+    payload = {
+        "mode": "apply",
+        "action": "reset-loyola-password",
+        "database": DEFAULT_STAGING_DATABASE,
+        "tenant_id": LOYOLA_TENANT_ID,
+        "username": LOYOLA_ADMIN_USERNAME,
+        "status": "password-reset",
+        "temporary_password_created": True,
+        "sessions_revoked": True,
+    }
+    _write_json(output, payload)
+    print(f"TEMPORARY_PASSWORD_ONE_TIME={temporary_password}", file=output)
+    return payload
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="SASU multitenant staging provisioning CLI")
-    parser.add_argument("scenario", choices=["loyola-demo"], help="Provisioning scenario to plan or apply")
+    parser.add_argument(
+        "scenario",
+        choices=["loyola-demo", "reset-loyola-password"],
+        help="Provisioning scenario to plan or apply",
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Print the provisioning plan without writing")
     mode.add_argument("--apply", action="store_true", help="Apply the provisioning plan to Cosmos staging")
     args = parser.parse_args(argv)
 
-    provision_loyola_demo(apply=bool(args.apply))
+    if args.scenario == "reset-loyola-password":
+        reset_loyola_password(apply=bool(args.apply))
+    else:
+        provision_loyola_demo(apply=bool(args.apply))
     return 0
 
 
