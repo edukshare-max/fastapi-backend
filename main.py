@@ -614,8 +614,8 @@ def handle_options():
     return {"message": "OK"}
 
 # Health check para verificar conectividad
-@app.get("/health")
-def health_check():
+@app.get("/legacy/health")
+def legacy_health_check():
     try:
         # Test básico de conectividad a Cosmos
         test_query = notas.query_items("SELECT TOP 1 * FROM c")

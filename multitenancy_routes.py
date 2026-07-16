@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from azure.cosmos import CosmosClient
 
 from multitenancy_auth import (
     InstitutionalAuthService,
@@ -18,6 +19,7 @@ from multitenancy_models import (
     TokenResponse,
 )
 from multitenancy_repositories import TenantAwareStudentRepository
+from multitenancy_staging_config import DEFAULT_STAGING_DATABASE
 
 
 def _require_module(service: InstitutionalAuthService, context: TenantContext, module: str) -> None:
@@ -190,21 +192,37 @@ def create_multitenancy_health_router(required_containers: list[str]) -> APIRout
 
     @router.get("/health")
     async def health():
-        return {"status": "ok"}
+        return {"status": "ok", "service": "sasu-multitenant-staging"}
 
     @router.get("/ready")
     async def ready(request: Request):
         settings = getattr(request.app.state, "multitenant_staging_settings", None)
-        if settings is None:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Staging no configurado")
+        if (
+            settings is None
+            or settings.app_env != "staging"
+            or not settings.enable_multitenant_routes
+            or settings.enable_legacy_routes
+            or settings.cosmos_database_name != DEFAULT_STAGING_DATABASE
+            or settings.allow_production_database
+        ):
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Staging no disponible")
+        try:
+            client_factory = getattr(request.app.state, "cosmos_client_factory", CosmosClient)
+            client = client_factory(settings.cosmos_endpoint, credential=settings.cosmos_key)
+            database = client.get_database_client(settings.cosmos_database_name)
+            existing_containers = {container["id"] for container in database.list_containers()}
+        except Exception:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Staging no disponible")
+
+        missing = sorted(set(required_containers) - existing_containers)
+        if missing:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Staging no disponible")
+
         return {
             "status": "ready",
             "environment": settings.app_env,
             "database": settings.cosmos_database_name,
-            "multitenant_routes": settings.enable_multitenant_routes,
-            "legacy_routes": settings.enable_legacy_routes,
-            "containers_configured": sorted(required_containers),
-            "production_database": False,
+            "containers": len(required_containers),
         }
 
     return router

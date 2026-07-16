@@ -25,6 +25,8 @@ PRODUCTION_NAME_MARKERS = {"prod", "production", "cres"}
 class StagingSettings:
     app_env: str
     enable_multitenant_routes: bool
+    cosmos_endpoint: str
+    cosmos_key: str
     cosmos_database_name: str
     allowed_origins: tuple[str, ...]
     enable_legacy_routes: bool = False
@@ -75,6 +77,8 @@ def load_staging_settings(env: Optional[dict] = None, *, required: Iterable[str]
     return StagingSettings(
         app_env=app_env,
         enable_multitenant_routes=routes_enabled,
+        cosmos_endpoint=source["COSMOS_ENDPOINT"],
+        cosmos_key=source["COSMOS_KEY"],
         cosmos_database_name=database_name,
         allowed_origins=parse_allowed_origins(source["ALLOWED_ORIGINS"]),
         enable_legacy_routes=legacy_routes_enabled,

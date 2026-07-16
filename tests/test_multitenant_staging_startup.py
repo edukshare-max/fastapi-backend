@@ -6,6 +6,9 @@ import unittest
 from contextlib import contextmanager
 from types import SimpleNamespace
 
+from fastapi import HTTPException
+
+from multitenancy_provisioning import MULTITENANT_CONTAINERS
 from multitenancy_staging_config import StagingConfigurationError, load_staging_settings
 
 
@@ -63,6 +66,29 @@ def route_endpoint(app, path):
     raise AssertionError(f"Route not found: {path}")
 
 
+class FakeCosmosDatabase:
+    def __init__(self, containers=None, fail=False):
+        self.containers = containers or []
+        self.fail = fail
+
+    def list_containers(self):
+        if self.fail:
+            raise RuntimeError("cosmos unavailable with sensitive connection details")
+        return [{"id": container} for container in self.containers]
+
+
+class FakeCosmosClient:
+    def __init__(self, endpoint, credential=None, containers=None, fail=False):
+        self.endpoint = endpoint
+        self.credential = credential
+        self.database_name = None
+        self.database = FakeCosmosDatabase(containers or [item.name for item in MULTITENANT_CONTAINERS], fail=fail)
+
+    def get_database_client(self, database_name):
+        self.database_name = database_name
+        return self.database
+
+
 class MultitenantStagingStartupTest(unittest.TestCase):
     def import_staging_main(self):
         with patched_env(STAGING_ENV, remove=LEGACY_ENV_KEYS):
@@ -80,6 +106,7 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         self.assertNotIn("/carnet/{id}", paths)
         self.assertNotIn("/auth/login", paths)
         self.assertNotIn("/updates/latest", paths)
+        self.assertNotIn("/legacy/health", paths)
         self.assertTrue(all(path in {"/health", "/ready"} or path.startswith("/v2") for path in paths))
 
     def test_v2_routes_are_registered(self):
@@ -91,16 +118,52 @@ class MultitenantStagingStartupTest(unittest.TestCase):
 
     def test_health_works_in_staging(self):
         module = self.import_staging_main()
+        module.app.state.cosmos_client_factory = lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("health must not create a Cosmos client")
+        )
         response = asyncio.run(route_endpoint(module.app, "/health")())
-        self.assertEqual(response, {"status": "ok"})
+        self.assertEqual(response, {"status": "ok", "service": "sasu-multitenant-staging"})
 
     def test_ready_reports_staging_database(self):
         module = self.import_staging_main()
+        client = FakeCosmosClient("endpoint", credential="secret")
+        module.app.state.cosmos_client_factory = lambda *args, **kwargs: client
         request = SimpleNamespace(app=module.app)
         body = asyncio.run(route_endpoint(module.app, "/ready")(request))
         self.assertEqual(body["database"], "sasu_multitenant_staging")
-        self.assertFalse(body["legacy_routes"])
-        self.assertFalse(body["production_database"])
+        self.assertEqual(body["environment"], "staging")
+        self.assertEqual(body["containers"], 8)
+        self.assertEqual(client.database_name, "sasu_multitenant_staging")
+
+    def test_ready_is_registered_without_v2_prefix(self):
+        module = self.import_staging_main()
+        paths = {route.path for route in module.app.routes}
+        self.assertIn("/ready", paths)
+        self.assertNotIn("/v2/ready", paths)
+
+    def test_ready_returns_503_when_cosmos_is_unavailable(self):
+        module = self.import_staging_main()
+        module.app.state.cosmos_client_factory = lambda *args, **kwargs: FakeCosmosClient(
+            "endpoint", credential="secret", fail=True
+        )
+        request = SimpleNamespace(app=module.app)
+        with self.assertRaises(HTTPException) as exc:
+            asyncio.run(route_endpoint(module.app, "/ready")(request))
+        self.assertEqual(exc.exception.status_code, 503)
+        self.assertEqual(exc.exception.detail, "Staging no disponible")
+        self.assertNotIn("sensitive", exc.exception.detail)
+
+    def test_ready_verifies_all_eight_containers(self):
+        module = self.import_staging_main()
+        containers = [item.name for item in MULTITENANT_CONTAINERS if item.name != "licenses_v2"]
+        module.app.state.cosmos_client_factory = lambda *args, **kwargs: FakeCosmosClient(
+            "endpoint", credential="secret", containers=containers
+        )
+        request = SimpleNamespace(app=module.app)
+        with self.assertRaises(HTTPException) as exc:
+            asyncio.run(route_endpoint(module.app, "/ready")(request))
+        self.assertEqual(exc.exception.status_code, 503)
+        self.assertEqual(exc.exception.detail, "Staging no disponible")
 
     def test_staging_rejects_sasu_database(self):
         env = dict(STAGING_ENV, COSMOS_DATABASE_NAME="SASU")
@@ -112,6 +175,11 @@ class MultitenantStagingStartupTest(unittest.TestCase):
         paths = {route.path for route in module.app.routes}
         self.assertNotIn("/carnet/search", paths)
         self.assertFalse(hasattr(module, "carnets"))
+
+    def test_health_route_is_not_duplicated(self):
+        module = self.import_staging_main()
+        paths = [route.path for route in module.app.routes]
+        self.assertEqual(paths.count("/health"), 1)
 
     def test_legacy_enabled_still_requires_legacy_container_variables(self):
         env = dict(STAGING_ENV, ENABLE_LEGACY_ROUTES="true", COSMOS_DATABASE_NAME="legacy_test")
